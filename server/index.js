@@ -16,8 +16,10 @@ initDb();
 const app  = express();
 const PORT = parseInt(process.env.PORT) || 3001;
 
+// ─── Trust proxy (obligatoire sur Render/Heroku/etc.) ────────────────────────
+app.set('trust proxy', 1);
+
 // ─── Route publique AVANT tout middleware ─────────────────────────────────────
-// Doit être déclarée ici pour éviter que helmet/auth ne la bloque
 app.get('/api/auth/users-list', (req, res) => {
   try {
     const db = getDb();
@@ -45,7 +47,7 @@ app.use(helmet({
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
