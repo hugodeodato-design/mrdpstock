@@ -16,6 +16,13 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// ─── GET /api/auth/users-list — Liste publique sans authentification ──────────
+router.get('/users-list', (req, res) => {
+  const db = getDb();
+  const users = db.prepare(`SELECT id, name, role, color FROM users WHERE is_active = 1 ORDER BY name`).all();
+  res.json(users);
+});
+
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────
 router.post('/login', loginLimiter, (req, res) => {
   const { userId, password } = req.body;
@@ -25,7 +32,14 @@ router.post('/login', loginLimiter, (req, res) => {
   }
 
   const db = getDb();
-  const user = db.prepare(`SELECT * FROM users WHERE id = ? AND is_active = 1`).get(userId);
+  // Accepte le nom OU l'UUID
+  const user = db.prepare(`SELECT * FROM users WHERE (id = ? OR name = ?) AND is_active = 1`).get(userId, userId);
+  console.log('[LOGIN] userId reçu:', userId);
+  console.log('[LOGIN] user trouvé:', user ? user.name : 'NON TROUVÉ');
+  if (user) {
+    const pwdOk = bcrypt.compareSync(password, user.password_hash);
+    console.log('[LOGIN] mot de passe correct:', pwdOk);
+  }
 
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     // Délai artificiel pour ralentir le brute-force
