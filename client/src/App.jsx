@@ -253,34 +253,47 @@ const Modal = ({title,subtitle,icon,children,onClose,footer,wide,xl}) => (
 // ═══════════════════════════════════════════════════════════════════
 //  LOGIN SCREEN
 // ═══════════════════════════════════════════════════════════════════
-function LoginScreen({users,onLogin,companyName}){
-  const [selUser,setSelUser]=useState(users[0]?.id||"");
+// ═══════════════════════════════════════════════════════════════════
+//  LOGIN SCREEN — Email + mot de passe
+// ═══════════════════════════════════════════════════════════════════
+function LoginScreen({onLogin,companyName}){
+  const [email,setEmail]=useState("");
   const [pwd,setPwd]=useState("");
   const [err,setErr]=useState("");
   const [showPwd,setShowPwd]=useState(false);
   const [loading,setLoading]=useState(false);
-  const doLogin=()=>{
-    if(loading) return;
-    const u=users.find(u=>u.id===selUser);
-    if(!u){setErr("Sélectionnez un utilisateur");return;}
-    setLoading(true);
-    setTimeout(()=>{
-      if(!u.pwdHash||hashPwd(pwd)===u.pwdHash){onLogin(u.id, pwd);}
-      else{setErr("Mot de passe incorrect");setPwd("");setLoading(false);}
-    },400);
+
+  const doLogin=async()=>{
+    if(loading)return;
+    if(!email.trim()){setErr("Email requis");return;}
+    if(!pwd){setErr("Mot de passe requis");return;}
+    setLoading(true);setErr("");
+    try{
+      const sUrl=(window.__SERVER_URL__||"").replace(/\/+$/,"");
+      const resp=await fetch(`${sUrl}/api/auth/login`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({email:email.trim(),password:pwd})
+      });
+      const data=await resp.json();
+      if(!resp.ok){setErr(data.error||"Erreur de connexion");setLoading(false);return;}
+      onLogin(data.token,data.user);
+    }catch(e){
+      setErr("Impossible de contacter le serveur");
+      setLoading(false);
+    }
   };
+
   return(
     <div style={{position:"fixed",inset:0,zIndex:9999,display:"flex",fontFamily:"'DM Sans',system-ui,sans-serif",background:"#060D18",overflow:"hidden"}}>
-      {/* BACKGROUND */}
+      {/* Background */}
       <div style={{position:"fixed",inset:0,overflow:"hidden",pointerEvents:"none"}}>
         <div style={{position:"absolute",top:"-20%",left:"-10%",width:"60%",height:"70%",background:"radial-gradient(ellipse,rgba(0,135,90,.12) 0%,transparent 70%)",borderRadius:"50%"}}/>
         <div style={{position:"absolute",bottom:"-20%",right:"-10%",width:"50%",height:"60%",background:"radial-gradient(ellipse,rgba(0,101,255,.08) 0%,transparent 70%)",borderRadius:"50%"}}/>
-        <div style={{position:"absolute",top:"40%",right:"25%",width:320,height:320,background:"radial-gradient(circle,rgba(0,135,90,.06) 0%,transparent 60%)"}}/>
       </div>
 
-      {/* LEFT: BRANDING */}
+      {/* LEFT: Branding */}
       <div style={{width:"55%",display:"flex",flexDirection:"column",justifyContent:"space-between",padding:"52px 64px",position:"relative",zIndex:1,overflow:"hidden"}}>
-        {/* Logo */}
         <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:80}}>
           <img src={"data:image/jpeg;base64,"+LOGO_B64} alt="" style={{width:48,height:48,borderRadius:14,objectFit:"cover",border:"2px solid rgba(255,255,255,.12)"}}/>
           <div>
@@ -288,49 +301,40 @@ function LoginScreen({users,onLogin,companyName}){
             <div style={{color:"rgba(255,255,255,.3)",fontSize:10,letterSpacing:3,textTransform:"uppercase"}}>{companyName||"M.R.D.P.S 27"}</div>
           </div>
         </div>
-
-        {/* Headline */}
         <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"center",maxWidth:520}}>
           <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(0,135,90,.15)",border:"1px solid rgba(0,135,90,.3)",borderRadius:20,padding:"5px 14px",marginBottom:36,width:"fit-content"}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:T.brand}}/>
             <span style={{color:T.brandM,fontSize:12,fontWeight:600,letterSpacing:.5}}>Plateforme de gestion client</span>
           </div>
-          <h1 style={{color:"#fff",fontSize:52,fontWeight:800,lineHeight:1.1,marginBottom:20,letterSpacing:-.5}}>
-            MRDPSTOCK
-          </h1>
-          <p style={{color:"rgba(255,255,255,.4)",fontSize:15,lineHeight:1.8}}>
-            Gérez vos bases clients, suivez votre stock et pilotez vos alertes depuis un seul espace.
-          </p>
+          <h1 style={{color:"#fff",fontSize:52,fontWeight:800,lineHeight:1.1,marginBottom:20,letterSpacing:-.5}}>MRDPSTOCK</h1>
+          <p style={{color:"rgba(255,255,255,.4)",fontSize:15,lineHeight:1.8}}>Gérez vos bases clients, suivez votre stock et pilotez vos alertes depuis un seul espace.</p>
         </div>
-
         <div style={{fontSize:12,color:"rgba(255,255,255,.18)"}}>© 2025 MRDPSTOCK — {companyName||"M.R.D.P.S 27"}. Tous droits réservés.</div>
       </div>
 
-      {/* RIGHT: LOGIN FORM */}
-      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40,position:"relative",zIndex:1,overflowY:"auto"}}>
+      {/* RIGHT: Formulaire */}
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40,position:"relative",zIndex:1}}>
         <div style={{width:"100%",maxWidth:420}}>
           <div style={{background:"rgba(255,255,255,.04)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,.1)",borderRadius:24,padding:44,boxShadow:"0 40px 80px rgba(0,0,0,.5)"}}>
             <div style={{marginBottom:36}}>
               <h2 style={{color:"#fff",fontSize:26,fontWeight:700,marginBottom:8}}>Connexion</h2>
               <p style={{color:"rgba(255,255,255,.4)",fontSize:13,lineHeight:1.6}}>Accédez à votre espace de gestion</p>
             </div>
-
-            <div style={{display:"grid",gap:20}}>
+            <div style={{display:"grid",gap:18}}>
+              {/* Email */}
               <div>
-                <label style={{display:"block",fontSize:11,fontWeight:600,color:"rgba(255,255,255,.4)",textTransform:"uppercase",letterSpacing:.8,marginBottom:8}}>Compte utilisateur</label>
-                <select value={selUser} onChange={e=>{setSelUser(e.target.value);setErr("");setPwd("");}}
-                  style={{width:"100%",padding:"12px 14px",borderRadius:11,border:`1.5px solid ${err?"#f87171":"rgba(255,255,255,.12)"}`,background:"rgba(255,255,255,.07)",color:"#fff",fontSize:14,fontFamily:"inherit",outline:"none",cursor:"pointer"}}>
-                  {users.map(u=><option key={u.id} value={u.id} style={{background:"#1a2a3a",color:"#fff"}}>{u.name} — {u.role==="admin"?"Admin":"Utilisateur"}</option>)}
-                </select>
+                <label style={{display:"block",fontSize:11,fontWeight:600,color:"rgba(255,255,255,.4)",textTransform:"uppercase",letterSpacing:.8,marginBottom:8}}>Adresse email</label>
+                <input type="email" value={email} onChange={e=>{setEmail(e.target.value);setErr("");}}
+                  onKeyDown={e=>e.key==="Enter"&&doLogin()} placeholder="prenom.nom@entreprise.fr" autoFocus
+                  style={{width:"100%",padding:"12px 14px",borderRadius:11,border:`1.5px solid ${err&&!pwd?"#f87171":"rgba(255,255,255,.12)"}`,background:"rgba(255,255,255,.07)",color:"#fff",fontSize:14,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
               </div>
-
+              {/* Mot de passe */}
               <div>
                 <label style={{display:"block",fontSize:11,fontWeight:600,color:"rgba(255,255,255,.4)",textTransform:"uppercase",letterSpacing:.8,marginBottom:8}}>Mot de passe</label>
                 <div style={{position:"relative"}}>
                   <input type={showPwd?"text":"password"} value={pwd}
                     onChange={e=>{setPwd(e.target.value);setErr("");}}
-                    onKeyDown={e=>e.key==="Enter"&&doLogin()}
-                    placeholder="••••••••" autoFocus
+                    onKeyDown={e=>e.key==="Enter"&&doLogin()} placeholder="••••••••"
                     style={{width:"100%",padding:"12px 44px 12px 14px",borderRadius:11,border:`1.5px solid ${err?"#f87171":"rgba(255,255,255,.12)"}`,background:"rgba(255,255,255,.07)",color:"#fff",fontSize:14,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
                   <button onClick={()=>setShowPwd(!showPwd)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",padding:4,display:"flex",color:"rgba(255,255,255,.3)"}}>
                     <Ic n={showPwd?"eyeoff":"eye"} s={16} c="rgba(255,255,255,.4)"/>
@@ -338,28 +342,116 @@ function LoginScreen({users,onLogin,companyName}){
                 </div>
                 {err&&<div style={{marginTop:8,fontSize:12,color:"#f87171",fontWeight:500,display:"flex",alignItems:"center",gap:6}}><Ic n="alert" s={12} c="#f87171"/>{err}</div>}
               </div>
-
+              {/* Bouton */}
               <button onClick={doLogin} disabled={loading}
                 style={{width:"100%",padding:14,borderRadius:11,background:loading?"rgba(0,135,90,.5)":`linear-gradient(135deg,${T.brand},${T.brandD})`,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:loading?"wait":"pointer",fontFamily:"inherit",letterSpacing:.3,boxShadow:"0 4px 20px rgba(0,135,90,.4)",transition:"all .2s",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
                 {loading?<><div style={{width:18,height:18,border:"2px solid rgba(255,255,255,.3)",borderTop:"2px solid #fff",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>Connexion...</>:"Se connecter"}
               </button>
             </div>
-
             <div style={{marginTop:24,textAlign:"center",fontSize:11,color:"rgba(255,255,255,.2)"}}>
-              Données sécurisées — Stockage local chiffré
+              Accès sur invitation uniquement — contactez votre administrateur
             </div>
           </div>
         </div>
       </div>
-
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  MAIN APP
+//  ACTIVATION SCREEN — Page d'activation via lien d'invitation
 // ═══════════════════════════════════════════════════════════════════
+function ActivationScreen({token,onActivated,companyName}){
+  const [info,setInfo]=useState(null);
+  const [pwd,setPwd]=useState("");
+  const [pwd2,setPwd2]=useState("");
+  const [err,setErr]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [checking,setChecking]=useState(true);
+  const [invalid,setInvalid]=useState(false);
+
+  useEffect(()=>{
+    if(!token){setInvalid(true);setChecking(false);return;}
+    const sUrl=(window.__SERVER_URL__||"").replace(/\/+$/,"");
+    fetch(`${sUrl}/api/auth/activate/${token}`)
+      .then(r=>r.ok?r.json():Promise.reject(r))
+      .then(d=>{setInfo(d);setChecking(false);})
+      .catch(()=>{setInvalid(true);setChecking(false);});
+  },[token]);
+
+  const doActivate=async()=>{
+    if(!pwd||pwd.length<8){setErr("Minimum 8 caractères");return;}
+    if(pwd!==pwd2){setErr("Les mots de passe ne correspondent pas");return;}
+    setLoading(true);setErr("");
+    try{
+      const sUrl=(window.__SERVER_URL__||"").replace(/\/+$/,"");
+      const resp=await fetch(`${sUrl}/api/auth/activate`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({token,password:pwd})
+      });
+      const data=await resp.json();
+      if(!resp.ok){setErr(data.error||"Erreur");setLoading(false);return;}
+      onActivated(data.token,data.user);
+    }catch(e){setErr("Erreur réseau");setLoading(false);}
+  };
+
+  const wrap=(child)=>(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#060D18",fontFamily:"'DM Sans',system-ui,sans-serif",padding:20}}>
+      <div style={{width:"100%",maxWidth:440}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <img src={"data:image/jpeg;base64,"+LOGO_B64} alt="" style={{width:56,height:56,borderRadius:16,objectFit:"cover",border:"2px solid rgba(255,255,255,.15)",marginBottom:16}}/>
+          <div style={{color:"#fff",fontWeight:800,fontSize:22}}>MRDPSTOCK</div>
+          <div style={{color:"rgba(255,255,255,.3)",fontSize:11,letterSpacing:2,textTransform:"uppercase"}}>{companyName||"M.R.D.P.S 27"}</div>
+        </div>
+        {child}
+      </div>
+    </div>
+  );
+
+  if(checking) return wrap(<div style={{textAlign:"center",color:"rgba(255,255,255,.4)",fontSize:14}}>Vérification en cours…</div>);
+
+  if(invalid) return wrap(
+    <div style={{background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.1)",borderRadius:20,padding:36,textAlign:"center"}}>
+      <div style={{fontSize:40,marginBottom:16}}>❌</div>
+      <div style={{color:"#f87171",fontWeight:700,fontSize:18,marginBottom:8}}>Lien invalide ou expiré</div>
+      <div style={{color:"rgba(255,255,255,.4)",fontSize:13,lineHeight:1.7}}>Ce lien d'activation n'est plus valable.<br/>Contactez votre administrateur pour recevoir une nouvelle invitation.</div>
+    </div>
+  );
+
+  return wrap(
+    <div style={{background:"rgba(255,255,255,.04)",backdropFilter:"blur(20px)",border:"1px solid rgba(255,255,255,.1)",borderRadius:24,padding:40,boxShadow:"0 40px 80px rgba(0,0,0,.5)"}}>
+      <div style={{background:"rgba(0,135,90,.15)",border:"1px solid rgba(0,135,90,.3)",borderRadius:12,padding:"14px 18px",marginBottom:28}}>
+        <div style={{fontSize:11,color:"rgba(255,255,255,.4)",textTransform:"uppercase",letterSpacing:.8,marginBottom:3}}>Compte à activer</div>
+        <div style={{color:"#fff",fontWeight:700,fontSize:16}}>{info?.name}</div>
+        <div style={{color:"rgba(255,255,255,.5)",fontSize:13}}>{info?.email}</div>
+      </div>
+      <h2 style={{color:"#fff",fontSize:20,fontWeight:700,marginBottom:6}}>Choisissez votre mot de passe</h2>
+      <p style={{color:"rgba(255,255,255,.4)",fontSize:13,lineHeight:1.6,marginBottom:24}}>Minimum 8 caractères. Vous pourrez le modifier à tout moment.</p>
+      <div style={{display:"grid",gap:16}}>
+        <div>
+          <label style={{display:"block",fontSize:11,fontWeight:600,color:"rgba(255,255,255,.4)",textTransform:"uppercase",letterSpacing:.8,marginBottom:7}}>Mot de passe</label>
+          <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr("");}}
+            placeholder="Min. 8 caractères"
+            style={{width:"100%",padding:"12px 14px",borderRadius:11,border:`1.5px solid ${err?"#f87171":"rgba(255,255,255,.12)"}`,background:"rgba(255,255,255,.07)",color:"#fff",fontSize:14,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
+        </div>
+        <div>
+          <label style={{display:"block",fontSize:11,fontWeight:600,color:"rgba(255,255,255,.4)",textTransform:"uppercase",letterSpacing:.8,marginBottom:7}}>Confirmer</label>
+          <input type="password" value={pwd2} onChange={e=>{setPwd2(e.target.value);setErr("");}}
+            onKeyDown={e=>e.key==="Enter"&&doActivate()} placeholder="Répétez le mot de passe"
+            style={{width:"100%",padding:"12px 14px",borderRadius:11,border:`1.5px solid ${err?"#f87171":"rgba(255,255,255,.12)"}`,background:"rgba(255,255,255,.07)",color:"#fff",fontSize:14,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
+        </div>
+        {err&&<div style={{fontSize:12,color:"#f87171",fontWeight:500,display:"flex",alignItems:"center",gap:6}}><Ic n="alert" s={12} c="#f87171"/>{err}</div>}
+        <button onClick={doActivate} disabled={loading}
+          style={{width:"100%",padding:13,borderRadius:11,background:`linear-gradient(135deg,${T.brand},${T.brandD})`,color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:loading?"wait":"pointer",fontFamily:"inherit",boxShadow:"0 4px 20px rgba(0,135,90,.4)",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+          {loading?<><div style={{width:18,height:18,border:"2px solid rgba(255,255,255,.3)",borderTop:"2px solid #fff",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>Activation...</>:"✅ Activer mon compte"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function App(){
   const [state, setState] = useState(DEFAULT_STATE);
   const [view,  setView]  = useState("dashboard");
@@ -560,43 +652,47 @@ function App(){
     return [{id:uid(),ts:now(),user:u?.name||"Inconnu",action,detail},...(st.history||[])].slice(0,1000);
   };
 
-  const handleLogin = async userId => {
-    const u=state.users.find(u=>u.id===userId);
-    const ns={...state,activeUser:userId};
-    ns.history=addHistory("Connexion",u?.name,ns);
+  // ─── Connexion via email (v3) ──────────────────────────────────────
+  const handleLoginWithPwd = async (jwtToken, userInfo) => {
+    setServerToken(jwtToken);
+    serverTokenRef.current = jwtToken;
+    try{ await window.storage.set("mrdpstock_jwt", jwtToken); } catch{}
 
-    // Obtenir un JWT du serveur si configuré
-    const sUrl = serverCfg.serverUrl?.replace(/\/+$/,"");
-    if(sUrl && u) {
-      // On ne peut pas re-hasher sans le mot de passe clair ici
-      // Le token JWT est obtenu lors de la saisie du mot de passe dans LoginScreen
-      // → cf. LoginScreen qui appelle handleLoginWithPwd
-    }
-    save(ns);
-  };
-  // Connexion — gère le JWT serveur ET le login en une seule passe
-  const handleLoginWithPwd = async (userId, plainPwd) => {
-    // Récupérer JWT si serveur configuré
-    const sUrl = serverCfgRef.current?.serverUrl?.replace(/\/+$/,"");
-    if(sUrl && plainPwd) {
-      try {
-        const resp = await fetch(`${sUrl}/api/auth/login`,{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({userId, password:plainPwd}),
+    // Charger l'état depuis le serveur avec le nouveau token
+    const sUrl = serverCfgRef.current?.serverUrl?.replace(/\/+$/,"") || "";
+    if(sUrl) {
+      try{
+        const resp = await fetch(`${sUrl}/api/state`,{
+          headers:{"Authorization":`Bearer ${jwtToken}`},
           signal: AbortSignal.timeout(5000)
         });
         if(resp.ok){
-          const {token} = await resp.json();
-          setServerToken(token);
-          serverTokenRef.current = token;
-          try{await window.storage.set("mrdpstock_jwt",token);}catch{}
+          const {state:srv, version} = await resp.json();
+          if(!srv.columns)  srv.columns  = DEFAULT_COLS;
+          if(!srv.settings) srv.settings = DEFAULT_STATE.settings;
+          setState({...srv, activeUser: userInfo.id, activeUserInfo: userInfo});
+          setServerVersion(version||0);
           setSyncStatus("ok");
+          try{ await window.storage.set("mrdpstock_v4", JSON.stringify(srv)); } catch{}
+          return;
         }
       } catch(e){ setSyncStatus("offline"); }
     }
-    // Un seul appel à handleLogin
-    handleLogin(userId);
+
+    // Fallback local
+    setState(prev => {
+      const ns = {...prev, activeUser: userInfo.id, activeUserInfo: userInfo};
+      const u = ns.users?.find(u => u.id === userInfo.id);
+      if(!u) {
+        ns.users = [...(ns.users||[]), {
+          id: userInfo.id, name: userInfo.name, email: userInfo.email,
+          role: userInfo.role, color: userInfo.color
+        }];
+      }
+      ns.history = [{id:uid(),ts:now(),user:userInfo.name,action:"Connexion",detail:userInfo.email}, ...(ns.history||[])].slice(0,1000);
+      return ns;
+    });
+    setSyncStatus("idle");
   };
 
   const handleLogout = () => {
@@ -737,8 +833,30 @@ function App(){
     save(ns);toast_("Mot de passe modifié avec succès");return true;
   };
 
+  // ─── Gestion de la page d'activation ──────────────────────────────
+  const [activationToken, setActivationToken] = useState(null);
+  useEffect(()=>{
+    const params = new URLSearchParams(window.location.search);
+    const tok = params.get('token');
+    if(tok) setActivationToken(tok);
+  },[]);
+
   if(!loaded) return null;
-  if(!state.activeUser) return <LoginScreen users={state.users} onLogin={handleLoginWithPwd} companyName={settings.companyName}/>;
+
+  // Page activation (lien invitation)
+  if(activationToken && !state.activeUser) {
+    return <ActivationScreen
+      token={activationToken}
+      companyName={settings.companyName}
+      onActivated={(token, userInfo) => {
+        setActivationToken(null);
+        window.history.replaceState({}, '', '/');
+        handleLoginWithPwd(token, userInfo);
+      }}
+    />;
+  }
+
+  if(!state.activeUser) return <LoginScreen onLogin={handleLoginWithPwd} companyName={settings.companyName}/>;
 
   // ── NAV CONFIG ──
   const NAV_SECTIONS = [
@@ -755,9 +873,10 @@ function App(){
     {
       label:"Configuration",
       items:[
-        {id:"users",    icon:"users",    label:"Utilisateurs"},
-        {id:"labels",   icon:"qr",       label:"Étiquettes QR"},
-        {id:"excel",    icon:"grid",     label:"Viewer Excel"},
+        {id:"users",      icon:"users",    label:"Utilisateurs"},
+        {id:"mouvements", icon:"moveIn",   label:"Mouvements stock"},
+        {id:"labels",     icon:"qr",       label:"Étiquettes QR"},
+        {id:"excel",      icon:"grid",     label:"Viewer Excel"},
       ]
     }
   ];
@@ -1584,40 +1703,287 @@ function App(){
   };
 
   // ── USERS ──
-  const UsersView = () => (
-    <div className="anim">
-      <div style={{background:T.blueBg,border:`1px solid ${T.blueBdr}`,borderRadius:12,padding:"12px 18px",marginBottom:20,display:"flex",alignItems:"center",gap:10}}>
-        <Ic n="info" s={15} c={T.blue}/>
-        <span style={{fontSize:12,color:T.blueTxt}}>Mot de passe par défaut des nouveaux comptes : <code style={{background:"rgba(255,255,255,.7)",padding:"2px 7px",borderRadius:5,fontSize:11}}>admin1234</code></span>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
-        {state.users.map(u=>(
-          <Card key={u.id}>
-            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-              <Avatar name={u.name} color={u.color} size={52}/>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontWeight:700,fontSize:16,color:T.txt,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name}</div>
-                <Badge v={u.role==="admin"?"orange":"blue"} sm style={{marginTop:4}}>{u.role==="admin"?"Administrateur":"Utilisateur"}</Badge>
-              </div>
-            </div>
-            <Divider sx={{marginBottom:14}}/>
-            <div style={{display:"flex",gap:6}}>
-              {state.activeUser===u.id&&<Badge v="green" dot sm sx={{flex:1,justifyContent:"center"}}>Connecté</Badge>}
-              <Btn v="blue" size="sm" sx={{flex:1,justifyContent:"center"}} onClick={()=>setModal({type:"userForm",data:{user:u,editId:u.id}})}><Ic n="edit" s={12}/>Modifier</Btn>
-              {state.users.length>1&&<button style={{background:T.redBg,border:`1px solid ${T.redBdr}`,cursor:"pointer",color:T.red,padding:"5px 9px",borderRadius:7}} onClick={()=>setModal({type:"confirm",data:{title:"Supprimer l'utilisateur",msg:`Supprimer "${u.name}" ? Action irréversible.`,onConfirm:()=>deleteUser(u.id)}})}><Ic n="trash" s={13}/></button>}
-            </div>
-          </Card>
-        ))}
-        <div onClick={()=>setModal({type:"userForm",data:{}})}
-          style={{border:`2px dashed ${T.bdrD}`,borderRadius:14,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,padding:32,cursor:"pointer",color:T.muted,minHeight:160}}>
-          <Ic n="plus" s={24} c={T.muted}/>
-          <span style={{fontSize:13,fontWeight:600}}>Ajouter un utilisateur</span>
-        </div>
-      </div>
-    </div>
-  );
+  const UsersView = () => {
+    const [inviteModal,setInviteModal]=useState(false);
+    const [pendingInvites,setPendingInvites]=useState([]);
+    const [loadingInvites,setLoadingInvites]=useState(false);
 
-  // ── SETTINGS ──
+    const loadInvites = async () => {
+      setLoadingInvites(true);
+      try{
+        const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+        const r=await fetch(`${sUrl}/api/auth/invitations`,{headers:{"Authorization":`Bearer ${serverToken}`}});
+        if(r.ok) setPendingInvites(await r.json());
+      }catch{}
+      setLoadingInvites(false);
+    };
+
+    useEffect(()=>{loadInvites();},[]);
+
+    const cancelInvite = async (id) => {
+      const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+      await fetch(`${sUrl}/api/auth/invitations/${id}`,{method:"DELETE",headers:{"Authorization":`Bearer ${serverToken}`}});
+      loadInvites(); toast_("Invitation annulée");
+    };
+
+    return(
+      <div className="anim">
+        {/* Info */}
+        <div style={{background:T.blueBg,border:`1px solid ${T.blueBdr}`,borderRadius:12,padding:"12px 18px",marginBottom:20,display:"flex",alignItems:"center",gap:10}}>
+          <Ic n="info" s={15} c={T.blue}/>
+          <span style={{fontSize:12,color:T.blueTxt}}>Les nouveaux utilisateurs reçoivent une <strong>invitation par email</strong> pour activer leur compte.</span>
+        </div>
+
+        {/* Utilisateurs actifs */}
+        <div style={{fontWeight:700,fontSize:15,color:T.txt,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+          <Ic n="users" s={16} c={T.brand}/>Utilisateurs actifs
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16,marginBottom:28}}>
+          {state.users.map(u=>(
+            <Card key={u.id}>
+              <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
+                <Avatar name={u.name} color={u.color} size={52}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:15,color:T.txt,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name}</div>
+                  {u.email&&<div style={{fontSize:12,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.email}</div>}
+                  <Badge v={u.role==="admin"?"orange":"blue"} sm style={{marginTop:4}}>{u.role==="admin"?"Administrateur":"Utilisateur"}</Badge>
+                </div>
+              </div>
+              <Divider sx={{marginBottom:14}}/>
+              <div style={{display:"flex",gap:6}}>
+                {state.activeUser===u.id&&<Badge v="green" dot sm sx={{flex:1,justifyContent:"center"}}>Connecté</Badge>}
+                <Btn v="blue" size="sm" sx={{flex:1,justifyContent:"center"}} onClick={()=>setModal({type:"userForm",data:{user:u,editId:u.id}})}><Ic n="edit" s={12}/>Modifier</Btn>
+                {state.users.length>1&&<button style={{background:T.redBg,border:`1px solid ${T.redBdr}`,cursor:"pointer",color:T.red,padding:"5px 9px",borderRadius:7}} onClick={()=>setModal({type:"confirm",data:{title:"Désactiver l'utilisateur",msg:`Désactiver "${u.name}" ? Il ne pourra plus se connecter.`,onConfirm:()=>deleteUser(u.id)}})}><Ic n="trash" s={13}/></button>}
+              </div>
+            </Card>
+          ))}
+          {/* Bouton invitation */}
+          <div onClick={()=>setInviteModal(true)}
+            style={{border:`2px dashed ${T.bdrD}`,borderRadius:14,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,padding:32,cursor:"pointer",color:T.muted,minHeight:160,transition:"all .15s"}}>
+            <Ic n="plus" s={24} c={T.muted}/>
+            <span style={{fontSize:13,fontWeight:600}}>Inviter un utilisateur</span>
+            <span style={{fontSize:11,textAlign:"center",color:T.muted}}>Envoi par email</span>
+          </div>
+        </div>
+
+        {/* Invitations en attente */}
+        {(pendingInvites.length>0||loadingInvites)&&(
+          <div>
+            <div style={{fontWeight:700,fontSize:15,color:T.txt,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+              <Ic n="bell" s={16} c={T.orange}/>Invitations en attente
+              {loadingInvites&&<div style={{width:14,height:14,border:`2px solid ${T.bdr}`,borderTop:`2px solid ${T.brand}`,borderRadius:"50%",animation:"spin .7s linear infinite"}}/>}
+            </div>
+            <div style={{display:"grid",gap:10}}>
+              {pendingInvites.map(inv=>(
+                <div key={inv.id} style={{background:T.card,border:`1px solid ${T.orangeBdr}`,borderRadius:12,padding:"14px 18px",display:"flex",alignItems:"center",gap:14}}>
+                  <div style={{width:42,height:42,borderRadius:11,background:T.orangeBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Ic n="bell" s={18} c={T.orange}/></div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:14,color:T.txt}}>{inv.name}</div>
+                    <div style={{fontSize:12,color:T.muted}}>{inv.email}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>Envoyée par {inv.invited_by_name} · Expire le {new Date(inv.expires_at).toLocaleDateString("fr-FR")}</div>
+                  </div>
+                  <Badge v="orange" sm>{inv.role==="admin"?"Admin":"Utilisateur"}</Badge>
+                  <button onClick={()=>cancelInvite(inv.id)} style={{background:T.redBg,border:`1px solid ${T.redBdr}`,cursor:"pointer",color:T.red,padding:"6px 10px",borderRadius:8,fontSize:12,fontFamily:"inherit",fontWeight:600}}>Annuler</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Modal invitation */}
+        {inviteModal&&<InviteModal onClose={()=>{setInviteModal(false);loadInvites();}}/>}
+      </div>
+    );
+  };
+
+  // ── MODAL INVITATION ──
+  const InviteModal = ({onClose}) => {
+    const [form,setForm]=useState({name:"",email:"",role:"user",color:"#0065FF"});
+    const [loading,setLoading]=useState(false);
+    const [sent,setSent]=useState(false);
+    const [err,setErr]=useState("");
+
+    const doInvite=async()=>{
+      if(!form.name.trim()||!form.email.trim()){setErr("Nom et email requis");return;}
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)){setErr("Email invalide");return;}
+      setLoading(true);setErr("");
+      try{
+        const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+        const resp=await fetch(`${sUrl}/api/auth/invite`,{
+          method:"POST",
+          headers:{"Content-Type":"application/json","Authorization":`Bearer ${serverToken}`},
+          body:JSON.stringify(form)
+        });
+        const data=await resp.json();
+        if(!resp.ok){setErr(data.error||"Erreur");setLoading(false);return;}
+        if(data.emailSent) setSent(true);
+        else{ setErr("Invitation créée mais email non envoyé : "+( data.emailError||"vérifiez la config SMTP"));setLoading(false); }
+      }catch(e){setErr("Erreur réseau");setLoading(false);}
+    };
+
+    return(
+      <Modal title="Inviter un utilisateur" subtitle="Un email sera envoyé avec un lien d'activation"
+        icon={<div style={{width:46,height:46,borderRadius:13,background:T.blueBg,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="users" s={20} c={T.blue}/></div>}
+        onClose={onClose}
+        footer={!sent&&<><Btn v="ghost" onClick={onClose}>Annuler</Btn><Btn onClick={doInvite} disabled={loading}>{loading?<><div style={{width:14,height:14,border:"2px solid rgba(255,255,255,.3)",borderTop:"2px solid #fff",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>Envoi...</>:<><Ic n="users" s={13}/>Envoyer l'invitation</>}</Btn></>}>
+        {sent?(
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:48,marginBottom:16}}>✅</div>
+            <div style={{fontWeight:700,fontSize:18,color:T.txt,marginBottom:8}}>Invitation envoyée !</div>
+            <div style={{fontSize:14,color:T.muted,lineHeight:1.7}}>
+              Un email a été envoyé à <strong>{form.email}</strong>.<br/>
+              Le lien est valable <strong>48 heures</strong>.
+            </div>
+            <Btn onClick={onClose} sx={{marginTop:20}}>Fermer</Btn>
+          </div>
+        ):(
+          <div style={{display:"grid",gap:18}}>
+            <Field label="Nom complet" required><Inp value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Prénom Nom" autoFocus/></Field>
+            <Field label="Email professionnel" required><Inp type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="prenom.nom@entreprise.fr"/></Field>
+            <Field label="Rôle">
+              <Sel value={form.role} onChange={e=>setForm({...form,role:e.target.value})}>
+                <option value="user">Utilisateur</option>
+                <option value="admin">Administrateur</option>
+                <option value="viewer">Lecteur (lecture seule)</option>
+              </Sel>
+            </Field>
+            <Field label="Couleur de l'avatar">
+              <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:4}}>
+                {["#00875A","#0065FF","#FF8B00","#DE350B","#6554C0","#00B8D9","#DB2777","#EA580C"].map(c=>(
+                  <div key={c} onClick={()=>setForm({...form,color:c})}
+                    style={{width:34,height:34,borderRadius:"50%",background:c,cursor:"pointer",border:form.color===c?`3px solid ${T.txt}`:"3px solid transparent",boxShadow:form.color===c?`0 0 0 2px white,0 0 0 4px ${c}`:"none",transition:"all .12s"}}/>
+                ))}
+              </div>
+            </Field>
+            {err&&<div style={{background:T.redBg,border:`1px solid ${T.redBdr}`,borderRadius:9,padding:"10px 14px",fontSize:13,color:T.red,display:"flex",alignItems:"center",gap:8}}><Ic n="alert" s={14} c={T.red}/>{err}</div>}
+          </div>
+        )}
+      </Modal>
+    );
+  };
+
+    // ── MOUVEMENTS VIEW ──
+  const MouvementsView = () => {
+    const [mvts,setMvts]=useState([]);
+    const [loading,setLoading]=useState(true);
+    const [filterBase,setFilterBase]=useState("all");
+    const [filterType,setFilterType]=useState("all");
+    const [modal2,setModal2]=useState(null);
+
+    const loadMvts=async()=>{
+      setLoading(true);
+      try{
+        const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+        const params=new URLSearchParams({limit:200});
+        if(filterBase!=="all") params.set("base_id",filterBase);
+        if(filterType!=="all") params.set("type",filterType);
+        const r=await fetch(`${sUrl}/api/mouvements?${params}`,{headers:{"Authorization":`Bearer ${serverToken}`}});
+        if(r.ok) setMvts(await r.json());
+      }catch{}
+      setLoading(false);
+    };
+
+    useEffect(()=>{loadMvts();},[filterBase,filterType]);
+
+    const typeConfig={
+      entree:   {label:"Entrée",   v:"green",  icon:"moveIn"},
+      sortie:   {label:"Sortie",   v:"red",    icon:"moveOut"},
+      transfert:{label:"Transfert",v:"blue",   icon:"refresh"},
+      ajustement:{label:"Ajustement",v:"purple",icon:"edit"},
+    };
+
+    const doMouvement=async(itemId,type,quantite,motif,baseDestId)=>{
+      try{
+        const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+        const resp=await fetch(`${sUrl}/api/mouvements`,{
+          method:"POST",
+          headers:{"Content-Type":"application/json","Authorization":`Bearer ${serverToken}`},
+          body:JSON.stringify({item_id:itemId,type,quantite,motif,base_dest_id:baseDestId})
+        });
+        const data=await resp.json();
+        if(!resp.ok){toast_(data.error||"Erreur","error");return false;}
+        toast_(type==="entree"?`+${quantite} en stock`:type==="sortie"?`-${quantite} sorti`:type==="transfert"?"Transfert effectué":"Ajustement enregistré");
+        loadMvts();
+        return true;
+      }catch{toast_("Erreur réseau","error");return false;}
+    };
+
+    return(
+      <div className="anim">
+        {/* Filtres */}
+        <div style={{display:"flex",gap:12,marginBottom:20,flexWrap:"wrap",alignItems:"center"}}>
+          <select value={filterBase} onChange={e=>setFilterBase(e.target.value)}
+            style={{padding:"9px 12px",borderRadius:9,border:`1.5px solid ${T.bdr}`,background:"#fff",color:T.txt,fontSize:13,fontFamily:"inherit",outline:"none"}}>
+            <option value="all">Toutes les bases</option>
+            {Object.entries(state.clients).map(([id,c])=><option key={id} value={id}>{c.name}</option>)}
+          </select>
+          <select value={filterType} onChange={e=>setFilterType(e.target.value)}
+            style={{padding:"9px 12px",borderRadius:9,border:`1.5px solid ${T.bdr}`,background:"#fff",color:T.txt,fontSize:13,fontFamily:"inherit",outline:"none"}}>
+            <option value="all">Tous les mouvements</option>
+            <option value="entree">Entrées</option>
+            <option value="sortie">Sorties</option>
+            <option value="transfert">Transferts</option>
+            <option value="ajustement">Ajustements</option>
+          </select>
+          <Btn v="secondary" onClick={loadMvts} sx={{marginLeft:"auto"}}><Ic n="refresh" s={13}/>Actualiser</Btn>
+        </div>
+
+        {/* Table */}
+        <Card p={0} sx={{overflow:"hidden"}}>
+          {loading?(
+            <div style={{padding:60,textAlign:"center",color:T.muted}}><div style={{width:32,height:32,border:`3px solid ${T.bdr}`,borderTop:`3px solid ${T.brand}`,borderRadius:"50%",animation:"spin .7s linear infinite",margin:"0 auto 12px"}}/><div>Chargement…</div></div>
+          ):mvts.length===0?(
+            <div style={{padding:64,textAlign:"center",color:T.muted}}>
+              <Ic n="moveIn" s={40} c={T.bdr}/>
+              <div style={{marginTop:12,fontWeight:600,color:T.sub}}>Aucun mouvement enregistré</div>
+              <div style={{fontSize:12,marginTop:4}}>Les entrées, sorties et transferts apparaîtront ici</div>
+            </div>
+          ):(
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
+                <thead><tr>
+                  {["Date","Article","Base","Type","Qté avant","Mouvement","Qté après","Motif","Par"].map(h=>(
+                    <th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.8,background:"#F8FAFC",borderBottom:`2px solid ${T.bdr}`,whiteSpace:"nowrap"}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {mvts.map(m=>{
+                    const tc=typeConfig[m.type]||{label:m.type,v:"gray",icon:"edit"};
+                    const delta=m.type==="entree"||m.type==="ajustement"?`+${m.quantite}`:`-${m.quantite}`;
+                    const deltaColor=m.type==="entree"?T.green:m.type==="sortie"?T.red:T.blue;
+                    return(
+                      <tr key={m.id} className="row">
+                        <td style={{padding:"11px 14px",fontSize:11,color:T.muted,whiteSpace:"nowrap",borderBottom:`1px solid ${T.bdrD}`}}>{m.created_at?.slice(0,16).replace("T"," ")}</td>
+                        <td style={{padding:"11px 14px",borderBottom:`1px solid ${T.bdrD}`}}>
+                          <div style={{fontWeight:600,color:T.txt,fontSize:13}}>{m.designation}</div>
+                          <div style={{fontSize:11,color:T.muted}}>{m.reference}</div>
+                        </td>
+                        <td style={{padding:"11px 14px",borderBottom:`1px solid ${T.bdrD}`}}>
+                          <div style={{fontSize:12,color:T.sub}}>{m.base_name}</div>
+                          {m.base_dest_name&&<div style={{fontSize:11,color:T.muted}}>→ {m.base_dest_name}</div>}
+                        </td>
+                        <td style={{padding:"11px 14px",borderBottom:`1px solid ${T.bdrD}`}}><Badge v={tc.v} sm>{tc.label}</Badge></td>
+                        <td style={{padding:"11px 14px",textAlign:"center",fontSize:13,color:T.muted,borderBottom:`1px solid ${T.bdrD}`}}>{m.quantite_avant??"-"}</td>
+                        <td style={{padding:"11px 14px",textAlign:"center",borderBottom:`1px solid ${T.bdrD}`}}>
+                          <span style={{fontWeight:800,fontSize:15,color:deltaColor}}>{delta}</span>
+                        </td>
+                        <td style={{padding:"11px 14px",textAlign:"center",fontSize:13,fontWeight:700,color:T.txt,borderBottom:`1px solid ${T.bdrD}`}}>{m.quantite_apres??"-"}</td>
+                        <td style={{padding:"11px 14px",fontSize:12,color:T.sub,borderBottom:`1px solid ${T.bdrD}`,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.motif||"—"}</td>
+                        <td style={{padding:"11px 14px",fontSize:12,color:T.sub,borderBottom:`1px solid ${T.bdrD}`,whiteSpace:"nowrap"}}>{m.user_name}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {mvts.length>0&&<div style={{padding:"10px 16px",borderTop:`1px solid ${T.bdr}`,fontSize:12,color:T.muted,background:"#F8FAFC"}}>{mvts.length} mouvement{mvts.length>1?"s":""} affiché{mvts.length>1?"s":""}</div>}
+        </Card>
+      </div>
+    );
+  };
+
+    // ── SETTINGS ──
   const SettingsView = () => {
     const tabs=[
       {id:"general",  label:"Général",       icon:"building"},
@@ -2570,7 +2936,8 @@ function App(){
     settings:"Paramètres",
     labels:"Étiquettes QR & Codes-barres",
     excel:"Viewer Excel — Migration",
-    stock: cl?.name||"Stock",
+    stock:       cl?.name||"Stock",
+    mouvements:  "Mouvements de stock",
   };
 
   // ── TOPBAR ACTIONS ──
@@ -2808,7 +3175,8 @@ function App(){
           {view==="alerts"&&<AlertsView/>}
           {view==="stock"&&cl&&<StockView/>}
           {view==="history"&&<HistoryView/>}
-          {view==="users"&&<UsersView/>}
+          {view===="users"&&<UsersView/>}
+          {view===="mouvements"&&<MouvementsView/>}
           {view==="settings"&&<SettingsView/>}
           {view==="labels"&&<LabelsView/>}
           {view==="excel"&&<ExcelView/>}
