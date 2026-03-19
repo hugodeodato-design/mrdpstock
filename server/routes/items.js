@@ -197,4 +197,27 @@ router.post('/bulk', requireWrite, (req, res) => {
   res.status(201).json({ count });
 });
 
+// ─── GET /api/items/stats — Statistiques globales pour le dashboard ───────────
+router.get('/stats', (req, res) => {
+  const db = getDb();
+
+  const total   = db.prepare(`SELECT COUNT(*) as n FROM items i JOIN bases b ON b.id=i.base_id WHERE b.is_active=1`).get().n;
+  const inStock = db.prepare(`SELECT COUNT(*) as n FROM items i JOIN bases b ON b.id=i.base_id WHERE b.is_active=1 AND i.etat='en_stock'`).get().n;
+  const outStock= db.prepare(`SELECT COUNT(*) as n FROM items i JOIN bases b ON b.id=i.base_id WHERE b.is_active=1 AND i.etat='sorti'`).get().n;
+  const lowStock= db.prepare(`SELECT COUNT(*) as n FROM items i JOIN bases b ON b.id=i.base_id WHERE b.is_active=1 AND i.etat='en_stock' AND i.seuil>0 AND i.quantite<=i.seuil`).get().n;
+  const clients = db.prepare(`SELECT COUNT(*) as n FROM bases WHERE is_active=1`).get().n;
+
+  const categories = db.prepare(`
+    SELECT COALESCE(i.categorie,'Sans catégorie') as categorie,
+           COUNT(*) as total,
+           SUM(CASE WHEN i.etat='en_stock' THEN 1 ELSE 0 END) as en_stock
+    FROM items i JOIN bases b ON b.id=i.base_id
+    WHERE b.is_active=1
+    GROUP BY categorie ORDER BY total DESC LIMIT 6
+  `).all();
+
+  res.json({ total, inStock, outStock, lowStock, clients, categories });
+});
+
+
 module.exports = router;

@@ -873,10 +873,12 @@ function App(){
     {
       label:"Configuration",
       items:[
-        {id:"users",      icon:"users",    label:"Utilisateurs"},
-        {id:"mouvements", icon:"moveIn",   label:"Mouvements stock"},
-        {id:"labels",     icon:"qr",       label:"Étiquettes QR"},
-        {id:"excel",      icon:"grid",     label:"Viewer Excel"},
+        {id:"users",       icon:"users",    label:"Utilisateurs"},
+        {id:"mouvements",  icon:"moveIn",   label:"Mouvements stock"},
+        {id:"inventaire",  icon:"check",    label:"Inventaire physique"},
+        {id:"rapports",    icon:"save",     label:"Rapports & Export"},
+        {id:"labels",      icon:"qr",       label:"Étiquettes QR"},
+        {id:"excel",       icon:"grid",     label:"Viewer Excel"},
       ]
     }
   ];
@@ -1182,11 +1184,62 @@ function App(){
 
   // ── DASHBOARD ──
   const DashboardView = () => {
-    const recentActivity = state.history.slice(0,6);
-    const topClients = Object.entries(state.clients).sort((a,b)=>b[1].items.length-a[1].items.length).slice(0,5);
-    const allLowStock = Object.entries(state.clients).flatMap(([cid,c])=>c.items.filter(i=>{const q=parseInt(i.quantite)||0,s=parseInt(i.seuil)||0;return s>0&&q<=s&&i.etat==="en_stock";}).map(i=>({...i,clientName:c.name,clientId:cid}))).slice(0,6);
+    const [serverStats, setServerStats] = useState(null);
+    const [serverActivity, setServerActivity] = useState([]);
+    const [loadingDash, setLoadingDash] = useState(true);
 
-    // Category distribution across all bases
+    const loadDashboard = async () => {
+      setLoadingDash(true);
+      const sUrl = (serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
+      const headers = {"Authorization":`Bearer ${serverToken}`};
+      try {
+        // Charger stats, activité et mouvements en parallèle
+        const [statsRes, histRes, mvtRes] = await Promise.all([
+          fetch(`${sUrl}/api/items/stats`, {headers}),
+          fetch(`${sUrl}/api/history?limit=6`, {headers}),
+          fetch(`${sUrl}/api/mouvements/stats?days=7`, {headers}),
+        ]);
+        if(statsRes.ok)   setServerStats(await statsRes.json());
+        if(histRes.ok)    setServerActivity(await histRes.json());
+        if(mvtRes.ok)     setMvtData(await mvtRes.json());
+      } catch(e) { console.error("Dashboard load error:", e); }
+      setLoadingDash(false);
+    };
+
+    const [mvtData, setMvtData] = useState([]);
+
+    useEffect(()=>{ loadDashboard(); },[]);
+
+    // Stats : priorité serveur, fallback local
+    const stats = serverStats || globalStats;
+    const recentActivity = serverActivity.length > 0 ? serverActivity : state.history.slice(0,6);
+
+    // Construire les données graphique mouvements 7 jours depuis le serveur
+    const mvtStats = useMemo(()=>{
+      const days = 7;
+      const result = [];
+      for(let d=days-1;d>=0;d--){
+        const dt = new Date(); dt.setDate(dt.getDate()-d);
+        const label = dt.toLocaleDateString("fr-FR",{weekday:"short",day:"numeric"});
+        const dayStr = dt.toISOString().slice(0,10);
+        // Depuis serveur si dispo, sinon local
+        if(mvtData.length > 0){
+          const entrées = mvtData.filter(m=>m.jour===dayStr && m.type==="entree").reduce((s,m)=>s+(m.nb_mouvements||0),0);
+          const sorties = mvtData.filter(m=>m.jour===dayStr && m.type==="sortie").reduce((s,m)=>s+(m.nb_mouvements||0),0);
+          result.push({label, entries:entrées, exits:sorties});
+        } else {
+          const fmtDay = dt.toLocaleDateString("fr-FR");
+          const entries = state.history.filter(h=>h.ts?.includes(fmtDay)&&h.action==="Entrée stock").length;
+          const exits   = state.history.filter(h=>h.ts?.includes(fmtDay)&&h.action==="Sortie stock").length;
+          result.push({label, entries, exits});
+        }
+      }
+      return result;
+    },[mvtData, state.history]);
+
+    const maxBar = Math.max(1,...mvtStats.map(d=>Math.max(d.entries,d.exits)));
+
+    // Stats catégories
     const catStats = useMemo(()=>{
       const m={};
       Object.values(state.clients).forEach(c=>c.items.forEach(i=>{
@@ -1195,36 +1248,39 @@ function App(){
         m[cat].count++;
         if(i.etat==="en_stock")m[cat].inStock++;
       }));
-      return Object.entries(m).sort((a,b)=>b[1].count-a[1].count).slice(0,6);
-    },[state.clients]);
-
-    // Mouvements des 7 derniers jours
-    const mvtStats = useMemo(()=>{
-      const days=7;
-      const result=[];
-      for(let d=days-1;d>=0;d--){
-        const dt=new Date(); dt.setDate(dt.getDate()-d);
-        const label=dt.toLocaleDateString("fr-FR",{weekday:"short",day:"numeric"});
-        const dayStr=dt.toLocaleDateString("fr-FR");
-        const entries=state.history.filter(h=>h.ts?.startsWith(dayStr.split("/").reverse().join("-"))===false&&h.ts?.includes(dayStr)&&h.action==="Entrée stock").length;
-        const exits=state.history.filter(h=>h.ts?.includes(dayStr)&&h.action==="Sortie stock").length;
-        result.push({label,entries,exits});
+      // Si serveur a des stats, les utiliser
+      if(serverStats?.categories){
+        const sm={};
+        serverStats.categories.forEach(c=>{ sm[c.categorie||"Sans catégorie"]={count:c.total,inStock:c.en_stock}; });
+        return Object.entries(sm).sort((a,b)=>b[1].count-a[1].count).slice(0,6);
       }
-      return result;
-    },[state.history]);
+      return Object.entries(m).sort((a,b)=>b[1].count-a[1].count).slice(0,6);
+    },[state.clients, serverStats]);
 
-    const maxBar = Math.max(1,...mvtStats.map(d=>Math.max(d.entries,d.exits)));
+    const topClients = Object.entries(state.clients).sort((a,b)=>b[1].items.length-a[1].items.length).slice(0,5);
+    const allLowStock = Object.entries(state.clients).flatMap(([cid,c])=>c.items.filter(i=>{const q=parseInt(i.quantite)||0,s=parseInt(i.seuil)||0;return s>0&&q<=s&&i.etat==="en_stock";}).map(i=>({...i,clientName:c.name,clientId:cid}))).slice(0,6);
 
     const PALETTE=["#00875A","#0065FF","#6554C0","#FF8B00","#00B8D9","#DE350B"];
 
+    const displayTotal   = serverStats?.total   ?? globalStats.total;
+    const displayInStock = serverStats?.inStock  ?? globalStats.inStock;
+    const displayOut     = serverStats?.outStock ?? globalStats.outStock;
+    const displayLow     = serverStats?.lowStock ?? globalStats.lowStock;
+    const displayClients = serverStats?.clients  ?? globalStats.clients;
+
     return(
-      <div className="anim">{/* Welcome bar */}
+      <div className="anim">
+        {/* Welcome bar */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
           <div>
-            <div style={{fontSize:22,fontWeight:800,color:T.txt}}>Bonjour, {activeUser?.name?.split(" ")[0]} 👋</div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{fontSize:22,fontWeight:800,color:T.txt}}>Bonjour, {activeUser?.name?.split(" ")[0]} 👋</div>
+              {loadingDash&&<div style={{width:14,height:14,border:`2px solid ${T.bdr}`,borderTop:`2px solid ${T.brand}`,borderRadius:"50%",animation:"spin .7s linear infinite"}}/>}
+            </div>
             <div style={{fontSize:13,color:T.muted,marginTop:2}}>{new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
           </div>
           <div style={{display:"flex",gap:8}}>
+            <Btn v="secondary" onClick={loadDashboard}><Ic n="refresh" s={13}/>Actualiser</Btn>
             <Btn v="secondary" onClick={()=>setView("search")}><Ic n="search" s={13}/>Recherche globale</Btn>
             <Btn onClick={()=>setModal({type:"newClient"})} size="lg"><Ic n="plus" s={15}/>Nouvelle base client</Btn>
           </div>
@@ -1232,11 +1288,11 @@ function App(){
 
         {/* KPIs */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14,marginBottom:24}}>
-          <StatCard icon="package" label="Bases clients" value={globalStats.clients} color={T.blue} bg={T.blueBg} bdr={T.blueBdr} onClick={()=>setView("warehouses")}/>
-          <StatCard icon="grid" label="Articles total" value={globalStats.total} color={T.brand} bg={T.greenBg} bdr={T.greenBdr}/>
-          <StatCard icon="check" label="En stock" value={globalStats.inStock} color={T.green} bg={T.greenBg} bdr={T.greenBdr} sub={`${pct(globalStats.inStock,globalStats.total)}% du total`}/>
-          <StatCard icon="arrowDown" label="Sortis" value={globalStats.outStock} color={T.red} bg={T.redBg} bdr={T.redBdr}/>
-          <StatCard icon="bell" label="Alertes stock bas" value={globalStats.lowStock} color={T.orange} bg={T.orangeBg} bdr={T.orangeBdr} onClick={()=>setView("alerts")}/>
+          <StatCard icon="package"  label="Bases clients"   value={displayClients} color={T.blue}   bg={T.blueBg}   bdr={T.blueBdr}   onClick={()=>setView("warehouses")}/>
+          <StatCard icon="grid"     label="Articles total"  value={displayTotal}   color={T.brand}  bg={T.greenBg}  bdr={T.greenBdr}/>
+          <StatCard icon="check"    label="En stock"        value={displayInStock} color={T.green}  bg={T.greenBg}  bdr={T.greenBdr}  sub={`${pct(displayInStock,displayTotal||1)}% du total`}/>
+          <StatCard icon="arrowDown"label="Sortis"          value={displayOut}     color={T.red}    bg={T.redBg}    bdr={T.redBdr}/>
+          <StatCard icon="bell"     label="Alertes stock"   value={displayLow}     color={T.orange} bg={T.orangeBg} bdr={T.orangeBdr} onClick={()=>setView("alerts")}/>
         </div>
 
         {/* Charts row */}
@@ -1255,8 +1311,8 @@ function App(){
               {mvtStats.map((d,i)=>(
                 <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                   <div style={{display:"flex",gap:2,alignItems:"flex-end",height:80}}>
-                    <div style={{width:12,background:T.green,borderRadius:"3px 3px 0 0",height:`${Math.max(4,(d.entries/maxBar)*76)}px`,transition:"height .4s"}}/>
-                    <div style={{width:12,background:T.red,borderRadius:"3px 3px 0 0",height:`${Math.max(4,(d.exits/maxBar)*76)}px`,transition:"height .4s"}}/>
+                    <div style={{width:12,background:T.green,borderRadius:"3px 3px 0 0",height:`${Math.max(4,(d.entries/maxBar)*76)}px`,transition:"height .4s",title:`${d.entries} entrées`}}/>
+                    <div style={{width:12,background:T.red,  borderRadius:"3px 3px 0 0",height:`${Math.max(4,(d.exits/maxBar)*76)}px`,  transition:"height .4s"}}/>
                   </div>
                   <div style={{fontSize:9,color:T.muted,textAlign:"center",whiteSpace:"nowrap"}}>{d.label}</div>
                 </div>
@@ -1264,7 +1320,7 @@ function App(){
             </div>
           </Card>
 
-          {/* Catégories donut */}
+          {/* Catégories */}
           <Card p={0} sx={{overflow:"hidden"}}>
             <div style={{padding:"16px 20px",display:"flex",alignItems:"center",gap:10,borderBottom:`1px solid ${T.bdr}`}}>
               <div style={{width:32,height:32,borderRadius:9,background:T.purpleBg,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="tag" s={14} c={T.purple}/></div>
@@ -1280,7 +1336,7 @@ function App(){
                     <div style={{flex:1,fontSize:12,color:T.txt,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cat}</div>
                     <div style={{fontSize:12,fontWeight:700,color:T.txt,minWidth:24,textAlign:"right"}}>{s.count}</div>
                     <div style={{width:80,height:6,background:T.bdr,borderRadius:3,overflow:"hidden"}}>
-                      <div style={{height:"100%",background:PALETTE[i%PALETTE.length],borderRadius:3,width:`${pct(s.count,globalStats.total||1)}%`}}/>
+                      <div style={{height:"100%",background:PALETTE[i%PALETTE.length],borderRadius:3,width:`${pct(s.count,displayTotal||1)}%`}}/>
                     </div>
                   </div>
                 ))}
@@ -1291,7 +1347,7 @@ function App(){
 
         {/* Row 2: bases + activity */}
         <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:18,marginBottom:18}}>
-          {/* Bases clients table */}
+          {/* Bases clients */}
           <Card p={0} sx={{overflow:"hidden"}}>
             <div style={{padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${T.bdr}`}}>
               <div style={{fontWeight:700,fontSize:15,color:T.txt,display:"flex",alignItems:"center",gap:10}}>
@@ -1301,36 +1357,27 @@ function App(){
               <button onClick={()=>setView("warehouses")} style={{background:"none",border:"none",cursor:"pointer",color:T.brand,fontSize:12,fontWeight:600,fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>Tout voir <Ic n="chevR" s={12} c={T.brand}/></button>
             </div>
             {topClients.length===0?(
-              <div style={{padding:48,textAlign:"center",color:T.muted}}>
-                <Ic n="package" s={36} c={T.bdr}/>
-                <div style={{marginTop:12,fontWeight:600,color:T.sub}}>Aucune base client</div>
-                <div style={{fontSize:12,marginTop:4,marginBottom:16}}>Créez votre premier espace de stock</div>
-                <Btn onClick={()=>setModal({type:"newClient"})} size="sm"><Ic n="plus" s={12}/>Créer</Btn>
-              </div>
+              <div style={{padding:48,textAlign:"center",color:T.muted,fontSize:13}}>Aucune base client</div>
             ):(
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr>
-                  {["Base","Articles","En stock","Avancement",""].map(h=><th key={h} style={{padding:"9px 16px",textAlign:"left",fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.8,background:"#F8FAFC",borderBottom:`1px solid ${T.bdr}`,whiteSpace:"nowrap"}}>{h}</th>)}
+                  {["Base","Articles","En stock","Alertes"].map(h=><th key={h} style={{padding:"8px 16px",textAlign:"left",fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.8,background:"#F8FAFC",borderBottom:`1px solid ${T.bdr}`}}>{h}</th>)}
                 </tr></thead>
                 <tbody>{topClients.map(([id,c])=>{
-                  const total=c.items.length,inS=c.items.filter(i=>i.etat==="en_stock").length;
+                  const total=c.items.length;
+                  const inStock=c.items.filter(i=>i.etat==="en_stock").length;
+                  const low=c.items.filter(i=>{const q=parseInt(i.quantite)||0,s=parseInt(i.seuil)||0;return s>0&&q<=s&&i.etat==="en_stock";}).length;
                   return(
-                    <tr key={id} className="row" style={{cursor:"pointer"}} onClick={()=>gotoStock(id)}>
-                      <td style={{padding:"12px 16px"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <div style={{width:34,height:34,borderRadius:9,background:T.greenBg,display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="package" s={14} c={T.green}/></div>
-                          <span style={{fontWeight:600,fontSize:13,color:T.txt}}>{c.name}</span>
+                    <tr key={id} className="row" onClick={()=>gotoStock(id)} style={{cursor:"pointer"}}>
+                      <td style={{padding:"11px 16px"}}><div style={{fontWeight:600,fontSize:13,color:T.txt}}>{c.name}</div></td>
+                      <td style={{padding:"11px 16px"}}><span style={{fontWeight:700,fontSize:14,color:T.txt}}>{total}</span></td>
+                      <td style={{padding:"11px 16px"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{flex:1,maxWidth:80,height:5,background:T.bdr,borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",background:T.brand,width:`${pct(inStock,total||1)}%`,borderRadius:3}}/></div>
+                          <span style={{fontSize:12,color:T.muted}}>{inStock}</span>
                         </div>
                       </td>
-                      <td style={{padding:"12px 16px"}}><span style={{fontWeight:700,fontSize:15,color:T.txt}}>{total}</span></td>
-                      <td style={{padding:"12px 16px"}}><Badge v="green" dot>{inS}</Badge></td>
-                      <td style={{padding:"12px 16px",minWidth:100}}>
-                        <div style={{marginBottom:4,display:"flex",justifyContent:"space-between"}}>
-                          <span style={{fontSize:10,color:T.muted}}>{pct(inS,total)}%</span>
-                        </div>
-                        <Prog value={inS} max={total||1} color={T.brand} h={5}/>
-                      </td>
-                      <td style={{padding:"12px 16px",textAlign:"right"}}><button style={{background:"none",border:"none",cursor:"pointer",color:T.brand,fontWeight:600,fontSize:12,fontFamily:"inherit"}}>Ouvrir →</button></td>
+                      <td style={{padding:"11px 16px"}}>{low>0?<Badge v="orange" dot sm>{low}</Badge>:<Badge v="green" dot sm>OK</Badge>}</td>
                     </tr>
                   );
                 })}</tbody>
@@ -1338,7 +1385,7 @@ function App(){
             )}
           </Card>
 
-          {/* Activity feed */}
+          {/* Activité récente */}
           <Card p={0} sx={{overflow:"hidden"}}>
             <div style={{padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${T.bdr}`}}>
               <div style={{fontWeight:700,fontSize:15,color:T.txt,display:"flex",alignItems:"center",gap:10}}>
@@ -1351,22 +1398,24 @@ function App(){
               <div style={{padding:48,textAlign:"center",color:T.muted,fontSize:13}}>Aucune activité</div>
             ):(
               <div style={{padding:"6px 0"}}>
-                {recentActivity.map((h,i)=>{
-                  const u=state.users.find(u=>u.name===h.user);
-                  const isAdd=h.action.includes("créé")||h.action.includes("ajouté")||h.action.includes("mporté")||h.action.includes("Entrée");
-                  const isDel=h.action.includes("supprimé")||h.action.includes("Sortie");
-                  const isMod=h.action.includes("modifié");
+                {recentActivity.slice(0,6).map((h,i)=>{
+                  const name = h.user_name||h.user||"Inconnu";
+                  const u=state.users.find(u=>u.name===name);
+                  const isAdd=h.action?.includes("créé")||h.action?.includes("ajouté")||h.action?.includes("mporté")||h.action?.includes("Entrée")||h.action?.includes("activé");
+                  const isDel=h.action?.includes("supprimé")||h.action?.includes("Sortie");
+                  const isMod=h.action?.includes("modifié")||h.action?.includes("Transfert");
                   const bv=isDel?"red":isAdd?"green":isMod?"blue":"gray";
+                  const dateStr = h.created_at||h.ts||"";
                   return(
-                    <div key={h.id} style={{padding:"10px 20px",display:"flex",alignItems:"flex-start",gap:12,borderBottom:i<recentActivity.length-1?`1px solid ${T.bdrD}`:"none"}}>
-                      <Avatar name={h.user} color={u?.color} size={32}/>
+                    <div key={h.id||i} style={{padding:"10px 20px",display:"flex",alignItems:"flex-start",gap:12,borderBottom:i<5?`1px solid ${T.bdrD}`:"none"}}>
+                      <Avatar name={name} color={u?.color} size={32}/>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
-                          <span style={{fontSize:12,fontWeight:600,color:T.txt}}>{h.user}</span>
+                          <span style={{fontSize:12,fontWeight:600,color:T.txt}}>{name}</span>
                           <Badge v={bv} sm>{h.action}</Badge>
                         </div>
-                        <div style={{fontSize:11,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.detail}</div>
-                        <div style={{fontSize:10,color:T.bdrD,marginTop:2}}>{h.ts}</div>
+                        <div style={{fontSize:11,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.detail||""}</div>
+                        <div style={{fontSize:10,color:T.bdrD,marginTop:2}}>{dateStr.slice(0,16).replace("T"," ")}</div>
                       </div>
                     </div>
                   );
@@ -1376,7 +1425,7 @@ function App(){
           </Card>
         </div>
 
-        {/* Low stock alerts */}
+        {/* Alertes stock bas */}
         {allLowStock.length>0&&(
           <Card p={0} sx={{overflow:"hidden",border:`1px solid ${T.orangeBdr}`,background:T.orangeBg}}>
             <div style={{padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -1404,7 +1453,7 @@ function App(){
     );
   };
 
-  // ── WAREHOUSES ──
+    // ── WAREHOUSES ──
   const WarehousesView = () => (
     <div className="anim">
       {Object.keys(state.clients).length===0?(
@@ -1652,51 +1701,113 @@ function App(){
   // ── HISTORY ──
   const HistoryView = () => {
     const [hSearch,setHSearch] = useState("");
-    const filtered = state.history.filter(h=>!hSearch||[h.user,h.action,h.detail,h.ts].some(v=>v?.toLowerCase().includes(hSearch.toLowerCase())));
+    const [serverHistory,setServerHistory] = useState([]);
+    const [loadingH,setLoadingH] = useState(false);
+    const [expandedRow,setExpandedRow] = useState(null);
+
+    // Charger l'historique depuis le serveur
+    const loadHistory = async () => {
+      setLoadingH(true);
+      try{
+        const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
+        const r=await fetch(`${sUrl}/api/history?limit=500`,{headers:{"Authorization":`Bearer ${serverToken}`}});
+        if(r.ok){
+          const data=await r.json();
+          // history.js retourne {total, rows} ou tableau direct selon la version
+          setServerHistory(Array.isArray(data) ? data : (data.rows||[]));
+        }
+        else { setServerHistory(state.history||[]); }
+      }catch{ setServerHistory(state.history||[]); }
+      setLoadingH(false);
+    };
+
+    useEffect(()=>{ loadHistory(); },[]);
+
+    // Fusionner historique serveur + local, dédoublonner par id
+    const allHistory = serverHistory.length > 0 ? serverHistory : (state.history||[]);
+
+    const filtered = allHistory.filter(h=>{
+      if(!hSearch) return true;
+      const search = hSearch.toLowerCase();
+      return [h.user,h.user_name,h.action,h.detail,h.ts,h.created_at].some(v=>v?.toLowerCase().includes(search));
+    });
+
+    const getName = h => h.user_name || h.user || "Inconnu";
+    const getDate = h => {
+      const d = h.created_at || h.ts || "";
+      return d.slice(0,16).replace("T"," ");
+    };
+    const getDetail = h => h.detail || "";
+
     return(
       <div className="anim">
-        <div style={{marginBottom:16}}>
-          <div style={{position:"relative"}}>
+        <div style={{display:"flex",gap:12,marginBottom:16,alignItems:"center"}}>
+          <div style={{position:"relative",flex:1}}>
             <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",pointerEvents:"none",color:T.muted}}><Ic n="search" s={15}/></span>
             <input value={hSearch} onChange={e=>setHSearch(e.target.value)}
               style={{width:"100%",padding:"9px 12px 9px 36px",borderRadius:10,border:`1.5px solid ${T.bdr}`,background:T.white,color:T.txt,fontSize:13,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}
               placeholder="Rechercher dans l'historique..."/>
           </div>
+          <Btn v="secondary" onClick={loadHistory} disabled={loadingH}>
+            {loadingH?<div style={{width:14,height:14,border:`2px solid ${T.bdr}`,borderTop:`2px solid ${T.brand}`,borderRadius:"50%",animation:"spin .7s linear infinite"}}/>:<Ic n="refresh" s={13}/>}
+            Actualiser
+          </Btn>
         </div>
         <Card p={0} sx={{overflow:"hidden"}}>
-          {filtered.length===0?(
+          {loadingH&&filtered.length===0?(
+            <div style={{padding:48,textAlign:"center",color:T.muted}}>
+              <div style={{width:28,height:28,border:`3px solid ${T.bdr}`,borderTop:`3px solid ${T.brand}`,borderRadius:"50%",animation:"spin .7s linear infinite",margin:"0 auto 12px"}}/>
+              <div>Chargement de l'historique...</div>
+            </div>
+          ):filtered.length===0?(
             <div style={{padding:64,textAlign:"center",color:T.muted}}>
               <Ic n="history" s={36} c={T.bdr}/>
               <div style={{marginTop:12,fontWeight:600,color:T.sub}}>Aucune activité</div>
             </div>
           ):(
-            <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr>{["Date / Heure","Utilisateur","Action","Détail"].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.8,background:"#F8FAFC",borderBottom:`2px solid ${T.bdr}`}}>{h}</th>)}</tr></thead>
-              <tbody>{filtered.map(h=>{
-                const u=state.users.find(u=>u.name===h.user);
-                const isAdd=h.action.includes("créé")||h.action.includes("ajouté")||h.action.includes("mporté");
-                const isDel=h.action.includes("supprimé");
-                const isMod=h.action.includes("modifié");
-                return(
-                  <tr key={h.id} className="row">
-                    <td style={{padding:"13px 16px",fontSize:12,color:T.muted,whiteSpace:"nowrap",borderBottom:`1px solid ${T.bdrD}`}}>{h.ts}</td>
-                    <td style={{padding:"13px 16px",borderBottom:`1px solid ${T.bdrD}`}}>
-                      <div style={{display:"flex",alignItems:"center",gap:9}}>
-                        <Avatar name={h.user} color={u?.color} size={30}/>
-                        <span style={{fontSize:13,fontWeight:500,color:T.txt}}>{h.user}</span>
-                      </div>
-                    </td>
-                    <td style={{padding:"13px 16px",borderBottom:`1px solid ${T.bdrD}`}}>
-                      <Badge v={isDel?"red":isAdd?"green":isMod?"blue":"gray"}>{h.action}</Badge>
-                    </td>
-                    <td style={{padding:"13px 16px",borderBottom:`1px solid ${T.bdrD}`}}>
-                      <span style={{fontSize:12,color:T.sub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"block",maxWidth:300}}>{h.detail}</span>
-                    </td>
-                  </tr>
-                );
-              })}</tbody>
-            </table>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
+                <thead><tr>
+                  {["Date / Heure","Utilisateur","Action","Détail"].map(h=>(
+                    <th key={h} style={{padding:"10px 16px",textAlign:"left",fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.8,background:"#F8FAFC",borderBottom:`2px solid ${T.bdr}`,whiteSpace:"nowrap"}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{filtered.map((h,i)=>{
+                  const u=state.users.find(u=>u.name===getName(h));
+                  const isAdd=h.action?.includes("créé")||h.action?.includes("ajouté")||h.action?.includes("mporté")||h.action?.includes("Connexion")||h.action?.includes("activé");
+                  const isDel=h.action?.includes("supprimé");
+                  const isMod=h.action?.includes("modifié")||h.action?.includes("Transfert")||h.action?.includes("Entrée")||h.action?.includes("Sortie")||h.action?.includes("Ajustement");
+                  const detail=getDetail(h);
+                  const isExpanded=expandedRow===i;
+                  return(
+                    <tr key={h.id||i} className="row" onClick={()=>setExpandedRow(isExpanded?null:i)} style={{cursor:"pointer"}}>
+                      <td style={{padding:"11px 16px",fontSize:12,color:T.muted,whiteSpace:"nowrap",borderBottom:`1px solid ${T.bdrD}`,verticalAlign:"top"}}>{getDate(h)}</td>
+                      <td style={{padding:"11px 16px",borderBottom:`1px solid ${T.bdrD}`,verticalAlign:"top"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:9}}>
+                          <Avatar name={getName(h)} color={u?.color} size={28}/>
+                          <span style={{fontSize:13,fontWeight:500,color:T.txt,whiteSpace:"nowrap"}}>{getName(h)}</span>
+                        </div>
+                      </td>
+                      <td style={{padding:"11px 16px",borderBottom:`1px solid ${T.bdrD}`,verticalAlign:"top",whiteSpace:"nowrap"}}>
+                        <Badge v={isDel?"red":isAdd?"green":isMod?"blue":"gray"}>{h.action}</Badge>
+                      </td>
+                      <td style={{padding:"11px 16px",borderBottom:`1px solid ${T.bdrD}`,verticalAlign:"top"}}>
+                        {isExpanded?(
+                          <span style={{fontSize:12,color:T.sub,wordBreak:"break-word",display:"block"}}>{detail||"—"}</span>
+                        ):(
+                          <span style={{fontSize:12,color:T.sub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"block",maxWidth:"min(400px, 35vw)"}} title={detail}>{detail||"—"}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            </div>
           )}
+          <div style={{padding:"10px 16px",borderTop:`1px solid ${T.bdr}`,fontSize:12,color:T.muted,background:"#F8FAFC",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span>{filtered.length} entrée{filtered.length>1?"s":""}{hSearch?" filtrée"+(filtered.length>1?"s":""):""}</span>
+            <span style={{fontSize:11,color:T.muted}}>Cliquez sur une ligne pour voir le détail complet</span>
+          </div>
         </Card>
       </div>
     );
@@ -1711,7 +1822,7 @@ function App(){
     const loadInvites = async () => {
       setLoadingInvites(true);
       try{
-        const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+        const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
         const r=await fetch(`${sUrl}/api/auth/invitations`,{headers:{"Authorization":`Bearer ${serverToken}`}});
         if(r.ok) setPendingInvites(await r.json());
       }catch{}
@@ -1721,7 +1832,7 @@ function App(){
     useEffect(()=>{loadInvites();},[]);
 
     const cancelInvite = async (id) => {
-      const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+      const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
       await fetch(`${sUrl}/api/auth/invitations/${id}`,{method:"DELETE",headers:{"Authorization":`Bearer ${serverToken}`}});
       loadInvites(); toast_("Invitation annulée");
     };
@@ -1808,7 +1919,7 @@ function App(){
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)){setErr("Email invalide");return;}
       setLoading(true);setErr("");
       try{
-        const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+        const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
         const resp=await fetch(`${sUrl}/api/auth/invite`,{
           method:"POST",
           headers:{"Content-Type":"application/json","Authorization":`Bearer ${serverToken}`},
@@ -1862,7 +1973,449 @@ function App(){
     );
   };
 
-    // ── MOUVEMENTS VIEW ──
+  // ── INVENTAIRE PHYSIQUE ──
+  const InventaireView = () => {
+    const [step,setStep]         = useState("select");  // select | count | report
+    const [baseId,setBaseId]     = useState("");
+    const [items2,setItems2]     = useState([]);
+    const [counts,setCounts]     = useState({});       // {itemId: qty_comptée}
+    const [loading,setLoading]   = useState(false);
+    const [saving,setSaving]     = useState(false);
+    const [report,setReport]     = useState(null);
+
+    // Charger les articles de la base sélectionnée
+    const loadBase = async (bid) => {
+      if(!bid) return;
+      setLoading(true);
+      try{
+        const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
+        const r=await fetch(`${sUrl}/api/items?base_id=${bid}`,{headers:{"Authorization":`Bearer ${serverToken}`}});
+        if(r.ok){
+          const data=await r.json();
+          setItems2(data);
+          // Pré-remplir avec les quantités théoriques
+          const c={};
+          data.forEach(it=>{ c[it.id]=String(it.quantite||0); });
+          setCounts(c);
+          setStep("count");
+        }
+      }catch(e){toast_("Erreur chargement articles","error");}
+      setLoading(false);
+    };
+
+    // Calculer le rapport d'écart
+    const calcReport = () => {
+      const ecarts = items2.map(it=>{
+        const theorique = parseInt(it.quantite)||0;
+        const physique  = parseInt(counts[it.id])||0;
+        const ecart     = physique - theorique;
+        return {...it, theorique, physique, ecart};
+      }).filter(it=>it.ecart!==0);
+
+      const total_ecart_pos = ecarts.filter(e=>e.ecart>0).reduce((s,e)=>s+e.ecart,0);
+      const total_ecart_neg = ecarts.filter(e=>e.ecart<0).reduce((s,e)=>s+e.ecart,0);
+
+      setReport({ecarts, total_ecart_pos, total_ecart_neg, date:new Date().toLocaleString("fr-FR"), baseName: state.clients[baseId]?.name});
+      setStep("report");
+    };
+
+    // Appliquer les corrections (ajustements de stock)
+    const applyCorrections = async () => {
+      if(!report || report.ecarts.length===0) return;
+      setSaving(true);
+      const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
+      let ok=0, fail=0;
+      for(const e of report.ecarts){
+        try{
+          const resp=await fetch(`${sUrl}/api/mouvements`,{
+            method:"POST",
+            headers:{"Content-Type":"application/json","Authorization":`Bearer ${serverToken}`},
+            body:JSON.stringify({
+              item_id:e.id, type:"ajustement",
+              quantite:Math.abs(e.ecart),
+              motif:`Inventaire physique du ${report.date} — écart ${e.ecart>0?"+":""}${e.ecart}`
+            })
+          });
+          if(resp.ok) ok++; else fail++;
+        }catch{ fail++; }
+      }
+      setSaving(false);
+      if(fail===0) toast_(`✅ ${ok} correction${ok>1?"s":""} appliquée${ok>1?"s":""}`);
+      else toast_(`${ok} OK, ${fail} erreur${fail>1?"s":""}`, fail>0?"error":"success");
+      setStep("select");
+      setBaseId(""); setItems2([]); setCounts({}); setReport(null);
+    };
+
+    // Export PDF du rapport
+    const exportPDF = () => {
+      if(!report) return;
+      const rows = report.ecarts.map(e=>
+        `${e.reference} | ${e.designation} | Théorique: ${e.theorique} | Physique: ${e.physique} | Écart: ${e.ecart>0?"+":""}${e.ecart}`
+      ).join("\n");
+      const content2 = `RAPPORT D'INVENTAIRE PHYSIQUE\n${report.baseName}\nDate: ${report.date}\n${"─".repeat(60)}\n${rows}\n${"─".repeat(60)}\nEcarts positifs: +${report.total_ecart_pos}  |  Ecarts négatifs: ${report.total_ecart_neg}\nTotal articles avec écart: ${report.ecarts.length}`;
+      const blob=new Blob([content2],{type:"text/plain"});
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);
+      a.download=`Inventaire_${report.baseName?.replace(/[^a-z0-9]/gi,"_")}_${new Date().toISOString().slice(0,10)}.txt`;
+      a.click();
+      toast_("Rapport téléchargé");
+    };
+
+    return(
+      <div className="anim">
+        {/* Étape 1 — Sélection de la base */}
+        {step==="select"&&(
+          <div style={{maxWidth:520}}>
+            <div style={{background:T.blueBg,border:`1px solid ${T.blueBdr}`,borderRadius:12,padding:"14px 18px",marginBottom:24,display:"flex",alignItems:"center",gap:10}}>
+              <Ic n="info" s={15} c={T.blue}/>
+              <div style={{fontSize:13,color:T.blueTxt,lineHeight:1.6}}>
+                <strong>L'inventaire physique</strong> vous permet de comparer le stock théorique (dans le système) avec ce que vous comptez réellement sur le terrain, et de corriger les écarts.
+              </div>
+            </div>
+            <Card>
+              <div style={{fontWeight:700,fontSize:16,color:T.txt,marginBottom:20}}>Démarrer un inventaire</div>
+              <Field label="Choisir la base à inventorier" required>
+                <Sel value={baseId} onChange={e=>setBaseId(e.target.value)}>
+                  <option value="">— Sélectionner une base —</option>
+                  {Object.entries(state.clients).map(([id,c])=><option key={id} value={id}>{c.name} ({c.items.length} articles)</option>)}
+                </Sel>
+              </Field>
+              <div style={{marginTop:20}}>
+                <Btn onClick={()=>loadBase(baseId)} disabled={!baseId||loading}>
+                  {loading?<><div style={{width:14,height:14,border:"2px solid rgba(255,255,255,.3)",borderTop:"2px solid #fff",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>Chargement...</>:<><Ic n="check" s={13}/>Commencer l'inventaire</>}
+                </Btn>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Étape 2 — Saisie des quantités */}
+        {step==="count"&&(
+          <div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:16,color:T.txt}}>Inventaire — {state.clients[baseId]?.name}</div>
+                <div style={{fontSize:12,color:T.muted,marginTop:2}}>Saisissez les quantités réelles comptées sur le terrain</div>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <Btn v="secondary" onClick={()=>{setStep("select");setItems2([]);setCounts({});}}>Annuler</Btn>
+                <Btn onClick={calcReport}><Ic n="check" s={13}/>Calculer les écarts</Btn>
+              </div>
+            </div>
+            <Card p={0} sx={{overflow:"hidden"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>
+                  {["Référence","Désignation","Catégorie","Stock système","Qté comptée","Écart estimé"].map(h=>(
+                    <th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.8,background:"#F8FAFC",borderBottom:`2px solid ${T.bdr}`,whiteSpace:"nowrap"}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {items2.map(it=>{
+                    const theorique=parseInt(it.quantite)||0;
+                    const physique=parseInt(counts[it.id])||0;
+                    const ecart=physique-theorique;
+                    const ecartColor=ecart>0?T.green:ecart<0?T.red:T.muted;
+                    return(
+                      <tr key={it.id} className="row" style={{background:ecart!==0?"#FFFBF0":undefined}}>
+                        <td style={{padding:"10px 14px",fontWeight:700,color:T.brand,fontSize:13,borderBottom:`1px solid ${T.bdrD}`}}>{it.reference}</td>
+                        <td style={{padding:"10px 14px",fontWeight:600,color:T.txt,fontSize:13,borderBottom:`1px solid ${T.bdrD}`}}>{it.designation}</td>
+                        <td style={{padding:"10px 14px",fontSize:12,color:T.muted,borderBottom:`1px solid ${T.bdrD}`}}>{it.categorie||"—"}</td>
+                        <td style={{padding:"10px 14px",textAlign:"center",fontWeight:700,fontSize:14,color:T.txt,borderBottom:`1px solid ${T.bdrD}`}}>{theorique}</td>
+                        <td style={{padding:"8px 14px",borderBottom:`1px solid ${T.bdrD}`}}>
+                          <input type="number" min="0" value={counts[it.id]??theorique}
+                            onChange={e=>setCounts({...counts,[it.id]:e.target.value})}
+                            style={{width:80,padding:"6px 10px",borderRadius:8,border:`1.5px solid ${ecart!==0?ecartColor:T.bdr}`,background:T.white,color:T.txt,fontSize:14,fontWeight:700,fontFamily:"inherit",outline:"none",textAlign:"center"}}/>
+                        </td>
+                        <td style={{padding:"10px 14px",textAlign:"center",borderBottom:`1px solid ${T.bdrD}`}}>
+                          {ecart===0?(
+                            <span style={{fontSize:12,color:T.muted}}>—</span>
+                          ):(
+                            <span style={{fontWeight:800,fontSize:14,color:ecartColor}}>{ecart>0?"+":""}{ecart}</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{padding:"10px 16px",borderTop:`1px solid ${T.bdr}`,background:"#F8FAFC",display:"flex",justifyContent:"space-between",fontSize:12,color:T.muted}}>
+                <span>{items2.length} articles à inventorier</span>
+                <span>{Object.values(counts).filter((v,i)=>parseInt(v)!==(parseInt(items2[i]?.quantite)||0)).length} écarts détectés</span>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Étape 3 — Rapport d'écart */}
+        {step==="report"&&report&&(
+          <div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:16,color:T.txt}}>Rapport d'inventaire — {report.baseName}</div>
+                <div style={{fontSize:12,color:T.muted,marginTop:2}}>{report.date}</div>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <Btn v="secondary" onClick={()=>setStep("count")}><Ic n="edit" s={13}/>Corriger les saisies</Btn>
+                <Btn v="secondary" onClick={exportPDF}><Ic n="save" s={13}/>Télécharger rapport</Btn>
+                {report.ecarts.length>0&&<Btn onClick={applyCorrections} disabled={saving}>{saving?"Application...":"Appliquer les corrections"}</Btn>}
+              </div>
+            </div>
+
+            {/* Résumé */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:20}}>
+              <div style={{background:T.greenBg,border:`1px solid ${T.greenBdr}`,borderRadius:12,padding:"16px 20px"}}>
+                <div style={{fontSize:11,color:T.green,fontWeight:600,textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Articles conformes</div>
+                <div style={{fontSize:28,fontWeight:800,color:T.green}}>{items2.length-report.ecarts.length}</div>
+                <div style={{fontSize:11,color:T.green}}>sur {items2.length} articles</div>
+              </div>
+              <div style={{background:T.redBg,border:`1px solid ${T.redBdr}`,borderRadius:12,padding:"16px 20px"}}>
+                <div style={{fontSize:11,color:T.red,fontWeight:600,textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Articles avec écart</div>
+                <div style={{fontSize:28,fontWeight:800,color:T.red}}>{report.ecarts.length}</div>
+                <div style={{fontSize:11,color:T.red}}>nécessitent correction</div>
+              </div>
+              <div style={{background:T.orangeBg,border:`1px solid ${T.orangeBdr}`,borderRadius:12,padding:"16px 20px"}}>
+                <div style={{fontSize:11,color:T.orange,fontWeight:600,textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Écart net total</div>
+                <div style={{fontSize:28,fontWeight:800,color:T.orange}}>{report.total_ecart_pos+report.total_ecart_neg>0?"+":""}{report.total_ecart_pos+report.total_ecart_neg}</div>
+                <div style={{fontSize:11,color:T.orange}}>+{report.total_ecart_pos} / {report.total_ecart_neg}</div>
+              </div>
+            </div>
+
+            {report.ecarts.length===0?(
+              <Card>
+                <div style={{textAlign:"center",padding:"24px 0"}}>
+                  <div style={{fontSize:36,marginBottom:12}}>✅</div>
+                  <div style={{fontWeight:700,fontSize:18,color:T.green,marginBottom:6}}>Inventaire conforme !</div>
+                  <div style={{fontSize:14,color:T.muted}}>Tous les articles correspondent au stock système. Aucune correction nécessaire.</div>
+                </div>
+              </Card>
+            ):(
+              <Card p={0} sx={{overflow:"hidden"}}>
+                <div style={{padding:"14px 18px",borderBottom:`1px solid ${T.bdr}`,fontWeight:700,color:T.txt,fontSize:14,display:"flex",alignItems:"center",gap:8}}>
+                  <Ic n="alert" s={15} c={T.orange}/>Articles avec écart — corrections à appliquer
+                </div>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>
+                    {["Référence","Désignation","Stock système","Compté","Écart","Action"].map(h=>(
+                      <th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:10,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.8,background:"#F8FAFC",borderBottom:`2px solid ${T.bdr}`}}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {report.ecarts.map(e=>(
+                      <tr key={e.id} style={{background:e.ecart<0?"#FFF5F5":"#F0FFF4"}}>
+                        <td style={{padding:"11px 14px",fontWeight:700,color:T.brand,borderBottom:`1px solid ${T.bdrD}`}}>{e.reference}</td>
+                        <td style={{padding:"11px 14px",fontWeight:600,color:T.txt,borderBottom:`1px solid ${T.bdrD}`}}>{e.designation}</td>
+                        <td style={{padding:"11px 14px",textAlign:"center",fontWeight:700,color:T.txt,borderBottom:`1px solid ${T.bdrD}`}}>{e.theorique}</td>
+                        <td style={{padding:"11px 14px",textAlign:"center",fontWeight:700,color:T.txt,borderBottom:`1px solid ${T.bdrD}`}}>{e.physique}</td>
+                        <td style={{padding:"11px 14px",textAlign:"center",borderBottom:`1px solid ${T.bdrD}`}}>
+                          <span style={{fontWeight:800,fontSize:15,color:e.ecart>0?T.green:T.red}}>{e.ecart>0?"+":""}{e.ecart}</span>
+                        </td>
+                        <td style={{padding:"11px 14px",borderBottom:`1px solid ${T.bdrD}`}}>
+                          <Badge v={e.ecart>0?"green":"red"} sm>{e.ecart>0?"Ajout":"Retrait"} de {Math.abs(e.ecart)}</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+      // ── RAPPORTS PDF ──
+  const RapportsView = () => {
+    const [generating,setGenerating] = useState(null);
+    const [baseFilter,setBaseFilter] = useState("all");
+    const [dateFrom,setDateFrom]     = useState(()=>{ const d=new Date(); d.setDate(1); return d.toISOString().slice(0,10); });
+    const [dateTo,setDateTo]         = useState(()=>new Date().toISOString().slice(0,10));
+
+    const sUrl = (serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
+    const headers = {"Authorization":`Bearer ${serverToken}`};
+
+    // Génère et télécharge un rapport depuis l'API export
+    const genRapport = async (type, label) => {
+      setGenerating(type);
+      try{
+        let url = `${sUrl}/api/export/`;
+        if(type==="base"&&baseFilter!=="all") url+=`base/${baseFilter}`;
+        else url+="all";
+        const r=await fetch(url,{headers});
+        if(!r.ok){ toast_("Erreur génération rapport","error"); setGenerating(null); return; }
+        const blob=await r.blob();
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob);
+        a.download=`MRDPSTOCK_${label.replace(/[^a-z0-9]/gi,"_")}_${new Date().toISOString().slice(0,10)}.xlsx`;
+        a.click();
+        toast_(`Rapport "${label}" téléchargé`);
+      }catch(e){ toast_("Erreur réseau","error"); }
+      setGenerating(null);
+    };
+
+    // Génère un rapport texte d'inventaire / alertes côté client
+    const genAlertes = () => {
+      const allLow = Object.entries(state.clients).flatMap(([cid,c])=>
+        c.items.filter(i=>{ const q=parseInt(i.quantite)||0,s=parseInt(i.seuil)||0; return s>0&&q<=s&&i.etat==="en_stock"; })
+               .map(i=>({...i,baseName:c.name}))
+      );
+      if(allLow.length===0){ toast_("Aucune alerte stock en cours"); return; }
+      const lines=[
+        "RAPPORT ALERTES STOCK BAS",
+        `Date : ${new Date().toLocaleString("fr-FR")}`,
+        "═".repeat(60),
+        "",
+        ...allLow.map(i=>`• ${i.designation} (${i.reference}) — ${i.baseName}  |  Qté: ${i.quantite} / Seuil: ${i.seuil}`),
+        "",
+        "═".repeat(60),
+        `Total : ${allLow.length} article${allLow.length>1?"s":""} en alerte`,
+      ];
+      const blob=new Blob([lines.join("\n")],{type:"text/plain;charset=utf-8"});
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);
+      a.download=`MRDPSTOCK_Alertes_${new Date().toISOString().slice(0,10)}.txt`;
+      a.click();
+      toast_("Rapport alertes téléchargé");
+    };
+
+    const genHistorique = async () => {
+      setGenerating("historique");
+      try{
+        const params=new URLSearchParams({limit:1000});
+        if(baseFilter!=="all") params.set("base_id",baseFilter);
+        const r=await fetch(`${sUrl}/api/history?${params}`,{headers});
+        const rows=r.ok?await r.json():state.history;
+        const data=Array.isArray(rows)?rows:(rows.rows||[]);
+
+        const lines=[
+          "RAPPORT HISTORIQUE DES ACTIONS",
+          `Période : ${dateFrom} au ${dateTo}`,
+          baseFilter!=="all"?`Base : ${state.clients[baseFilter]?.name}`:"Toutes les bases",
+          `Date génération : ${new Date().toLocaleString("fr-FR")}`,
+          "═".repeat(70),
+          "",
+          "Date/Heure          | Utilisateur        | Action              | Détail",
+          "─".repeat(70),
+          ...data
+            .filter(h=>{
+              const d=(h.created_at||h.ts||"").slice(0,10);
+              return d>=dateFrom&&d<=dateTo;
+            })
+            .map(h=>`${(h.created_at||h.ts||"").slice(0,16).replace("T"," ")} | ${(h.user_name||h.user||"").padEnd(18)} | ${(h.action||"").padEnd(20)} | ${h.detail||""}`),
+          "",
+          "═".repeat(70),
+        ];
+        const blob=new Blob([lines.join("\n")],{type:"text/plain;charset=utf-8"});
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(blob);
+        a.download=`MRDPSTOCK_Historique_${dateFrom}_${dateTo}.txt`;
+        a.click();
+        toast_("Rapport historique téléchargé");
+      }catch(e){ toast_("Erreur","error"); }
+      setGenerating(null);
+    };
+
+    const RAPPORTS = [
+      {
+        id:"stock",
+        icon:"grid",
+        color:T.blue, bg:T.blueBg, bdr:T.blueBdr,
+        title:"État du stock",
+        desc:"Liste complète des articles avec quantités, emplacements et états. Format Excel.",
+        badge:"Excel",
+        badgeV:"blue",
+        action:()=>genRapport("base","Etat_Stock"),
+      },
+      {
+        id:"alertes",
+        icon:"bell",
+        color:T.orange, bg:T.orangeBg, bdr:T.orangeBdr,
+        title:"Alertes stock bas",
+        desc:"Articles dont la quantité est en dessous du seuil d'alerte. Format texte imprimable.",
+        badge:"Texte",
+        badgeV:"orange",
+        action:genAlertes,
+      },
+      {
+        id:"mouvements",
+        icon:"moveIn",
+        color:T.green, bg:T.greenBg, bdr:T.greenBdr,
+        title:"Export mouvements",
+        desc:"Toutes les entrées, sorties et transferts. Format Excel multi-onglets.",
+        badge:"Excel",
+        badgeV:"green",
+        action:()=>genRapport("all","Export_Complet"),
+      },
+      {
+        id:"historique",
+        icon:"history",
+        color:T.purple, bg:T.purpleBg, bdr:T.purpleBdr,
+        title:"Historique des actions",
+        desc:"Journal de toutes les actions utilisateurs sur la période sélectionnée. Format texte.",
+        badge:"Texte",
+        badgeV:"purple",
+        action:genHistorique,
+      },
+    ];
+
+    return(
+      <div className="anim">
+        {/* Filtres globaux */}
+        <Card sx={{marginBottom:20}}>
+          <div style={{fontWeight:600,fontSize:14,color:T.txt,marginBottom:14}}>Paramètres des rapports</div>
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:14,alignItems:"end"}}>
+            <Field label="Base client">
+              <Sel value={baseFilter} onChange={e=>setBaseFilter(e.target.value)}>
+                <option value="all">Toutes les bases</option>
+                {Object.entries(state.clients).map(([id,c])=><option key={id} value={id}>{c.name}</option>)}
+              </Sel>
+            </Field>
+            <Field label="Du">
+              <Inp type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
+            </Field>
+            <Field label="Au">
+              <Inp type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
+            </Field>
+          </div>
+        </Card>
+
+        {/* Grille de rapports */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
+          {RAPPORTS.map(r=>(
+            <div key={r.id} style={{background:T.card,border:`1px solid ${T.bdr}`,borderRadius:14,padding:"22px 24px",boxShadow:T.sm,display:"flex",flexDirection:"column",gap:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:46,height:46,borderRadius:12,background:r.bg,border:`1px solid ${r.bdr}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <Ic n={r.icon} s={20} c={r.color}/>
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:15,color:T.txt}}>{r.title}</div>
+                  <Badge v={r.badgeV} sm style={{marginTop:3}}>{r.badge}</Badge>
+                </div>
+              </div>
+              <div style={{fontSize:13,color:T.muted,lineHeight:1.6,flex:1}}>{r.desc}</div>
+              <button
+                onClick={r.action}
+                disabled={generating===r.id}
+                style={{width:"100%",padding:"10px 16px",borderRadius:10,background:generating===r.id?"rgba(0,135,90,.5)":`linear-gradient(135deg,${T.brand},${T.brandD})`,color:"#fff",border:"none",fontSize:13,fontWeight:700,cursor:generating===r.id?"wait":"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                {generating===r.id?(
+                  <><div style={{width:14,height:14,border:"2px solid rgba(255,255,255,.3)",borderTop:"2px solid #fff",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>Génération...</>
+                ):(
+                  <><Ic n="save" s={13}/>Télécharger</>
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Info format */}
+        <div style={{marginTop:20,padding:"12px 16px",background:T.bg,border:`1px solid ${T.bdr}`,borderRadius:10,fontSize:12,color:T.muted}}>
+          <strong style={{color:T.sub}}>Formats disponibles :</strong> Excel (.xlsx) — ouvre directement dans Excel, Google Sheets, LibreOffice. Texte (.txt) — imprimable depuis n'importe quel éditeur.
+        </div>
+      </div>
+    );
+  };
+
+        // ── MOUVEMENTS VIEW ──
   const MouvementsView = () => {
     const [mvts,setMvts]=useState([]);
     const [loading,setLoading]=useState(true);
@@ -1873,13 +2426,14 @@ function App(){
     const loadMvts=async()=>{
       setLoading(true);
       try{
-        const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+        const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
         const params=new URLSearchParams({limit:200});
         if(filterBase!=="all") params.set("base_id",filterBase);
         if(filterType!=="all") params.set("type",filterType);
         const r=await fetch(`${sUrl}/api/mouvements?${params}`,{headers:{"Authorization":`Bearer ${serverToken}`}});
         if(r.ok) setMvts(await r.json());
-      }catch{}
+        else { console.error("Mouvements API error:", r.status); }
+      }catch(e){ console.error("Mouvements fetch error:", e); }
       setLoading(false);
     };
 
@@ -1894,7 +2448,7 @@ function App(){
 
     const doMouvement=async(itemId,type,quantite,motif,baseDestId)=>{
       try{
-        const sUrl=(serverCfg.serverUrl||"").replace(/\/+$/,"");
+        const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
         const resp=await fetch(`${sUrl}/api/mouvements`,{
           method:"POST",
           headers:{"Content-Type":"application/json","Authorization":`Bearer ${serverToken}`},
@@ -1908,8 +2462,83 @@ function App(){
       }catch{toast_("Erreur réseau","error");return false;}
     };
 
+    // Modal nouveau mouvement
+    const [mvtModal,setMvtModal] = useState(false);
+    const [mvtForm,setMvtForm] = useState({item_id:"",base_id:"all",type:"entree",quantite:1,motif:"",base_dest_id:""});
+    const [mvtItems,setMvtItems] = useState([]);
+    const [mvtErr,setMvtErr] = useState("");
+    const [mvtLoading2,setMvtLoading2] = useState(false);
+
+    const loadItemsForBase = async (baseId) => {
+      if(!baseId||baseId==="all"){ setMvtItems([]); return; }
+      try{
+        const sUrl=(serverCfg.serverUrl||window.location.origin).replace(/\/+$/,"");
+        const r=await fetch(`${sUrl}/api/items?base_id=${baseId}`,{headers:{"Authorization":`Bearer ${serverToken}`}});
+        if(r.ok) setMvtItems(await r.json());
+      }catch{}
+    };
+
+    const submitMvt = async () => {
+      if(!mvtForm.item_id){setMvtErr("Sélectionnez un article");return;}
+      if(!mvtForm.quantite||mvtForm.quantite<1){setMvtErr("Quantité invalide");return;}
+      if(mvtForm.type==="transfert"&&!mvtForm.base_dest_id){setMvtErr("Sélectionnez la base destination");return;}
+      setMvtLoading2(true);setMvtErr("");
+      const ok=await doMouvement(mvtForm.item_id,mvtForm.type,parseInt(mvtForm.quantite),mvtForm.motif,mvtForm.base_dest_id||null);
+      setMvtLoading2(false);
+      if(ok){setMvtModal(false);setMvtForm({item_id:"",base_id:"all",type:"entree",quantite:1,motif:"",base_dest_id:""});setMvtItems([]);}
+      else setMvtErr("Erreur lors du mouvement");
+    };
+
     return(
       <div className="anim">
+        {/* Modal nouveau mouvement */}
+        {mvtModal&&(
+          <Modal title="Nouveau mouvement de stock"
+            icon={<div style={{width:46,height:46,borderRadius:13,background:"#E3FCEF",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="moveIn" s={20} c={T.brand}/></div>}
+            onClose={()=>{setMvtModal(false);setMvtErr("");}}
+            footer={<><Btn v="ghost" onClick={()=>setMvtModal(false)}>Annuler</Btn><Btn onClick={submitMvt} disabled={mvtLoading2}>{mvtLoading2?"En cours...":"Enregistrer"}</Btn></>}>
+            <div style={{display:"grid",gap:16}}>
+              <Field label="Base client" required>
+                <Sel value={mvtForm.base_id} onChange={e=>{setMvtForm({...mvtForm,base_id:e.target.value,item_id:""});loadItemsForBase(e.target.value);}}>
+                  <option value="all">— Choisir une base —</option>
+                  {Object.entries(state.clients).map(([id,c])=><option key={id} value={id}>{c.name}</option>)}
+                </Sel>
+              </Field>
+              <Field label="Article" required>
+                <Sel value={mvtForm.item_id} onChange={e=>setMvtForm({...mvtForm,item_id:e.target.value})} disabled={mvtItems.length===0}>
+                  <option value="">{mvtItems.length===0?"— Choisir une base d'abord —":"— Choisir un article —"}</option>
+                  {mvtItems.map(it=><option key={it.id} value={it.id}>{it.reference} — {it.designation} (qté: {it.quantite})</option>)}
+                </Sel>
+              </Field>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <Field label="Type de mouvement" required>
+                  <Sel value={mvtForm.type} onChange={e=>setMvtForm({...mvtForm,type:e.target.value})}>
+                    <option value="entree">Entrée</option>
+                    <option value="sortie">Sortie</option>
+                    <option value="transfert">Transfert</option>
+                    <option value="ajustement">Ajustement</option>
+                  </Sel>
+                </Field>
+                <Field label="Quantité" required>
+                  <Inp type="number" min="1" value={mvtForm.quantite} onChange={e=>setMvtForm({...mvtForm,quantite:e.target.value})}/>
+                </Field>
+              </div>
+              {mvtForm.type==="transfert"&&(
+                <Field label="Base destination" required>
+                  <Sel value={mvtForm.base_dest_id} onChange={e=>setMvtForm({...mvtForm,base_dest_id:e.target.value})}>
+                    <option value="">— Choisir la base destination —</option>
+                    {Object.entries(state.clients).filter(([id])=>id!==mvtForm.base_id).map(([id,c])=><option key={id} value={id}>{c.name}</option>)}
+                  </Sel>
+                </Field>
+              )}
+              <Field label="Motif (optionnel)">
+                <Inp value={mvtForm.motif} onChange={e=>setMvtForm({...mvtForm,motif:e.target.value})} placeholder="Ex: livraison fournisseur, réparation..."/>
+              </Field>
+              {mvtErr&&<div style={{background:T.redBg,border:`1px solid ${T.redBdr}`,borderRadius:9,padding:"10px 14px",fontSize:13,color:T.red}}>{mvtErr}</div>}
+            </div>
+          </Modal>
+        )}
+
         {/* Filtres */}
         <div style={{display:"flex",gap:12,marginBottom:20,flexWrap:"wrap",alignItems:"center"}}>
           <select value={filterBase} onChange={e=>setFilterBase(e.target.value)}
@@ -1925,7 +2554,8 @@ function App(){
             <option value="transfert">Transferts</option>
             <option value="ajustement">Ajustements</option>
           </select>
-          <Btn v="secondary" onClick={loadMvts} sx={{marginLeft:"auto"}}><Ic n="refresh" s={13}/>Actualiser</Btn>
+          <Btn v="secondary" onClick={loadMvts}><Ic n="refresh" s={13}/>Actualiser</Btn>
+          <Btn onClick={()=>setMvtModal(true)} sx={{marginLeft:"auto"}}><Ic n="plus" s={13}/>Nouveau mouvement</Btn>
         </div>
 
         {/* Table */}
@@ -2938,6 +3568,8 @@ function App(){
     excel:"Viewer Excel — Migration",
     stock:       cl?.name||"Stock",
     mouvements:  "Mouvements de stock",
+    inventaire:  "Inventaire physique",
+    rapports:    "Rapports & Export",
   };
 
   // ── TOPBAR ACTIONS ──
@@ -3177,6 +3809,8 @@ function App(){
           {view==="history"&&<HistoryView/>}
           {view==="users"&&<UsersView/>}
           {view==="mouvements"&&<MouvementsView/>}
+          {view==="inventaire"&&<InventaireView/>}
+          {view==="rapports"&&<RapportsView/>}
           {view==="settings"&&<SettingsView/>}
           {view==="labels"&&<LabelsView/>}
           {view==="excel"&&<ExcelView/>}
