@@ -3175,8 +3175,8 @@ function App(){
           {view==="alerts"&&<AlertsView/>}
           {view==="stock"&&cl&&<StockView/>}
           {view==="history"&&<HistoryView/>}
-          {view===="users"&&<UsersView/>}
-          {view===="mouvements"&&<MouvementsView/>}
+          {view==="users"&&<UsersView/>}
+          {view==="mouvements"&&<MouvementsView/>}
           {view==="settings"&&<SettingsView/>}
           {view==="labels"&&<LabelsView/>}
           {view==="excel"&&<ExcelView/>}
